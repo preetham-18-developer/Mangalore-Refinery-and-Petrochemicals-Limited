@@ -107,45 +107,49 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
         std::string keyword = tokens[0];
         std::transform(keyword.begin(), keyword.end(), keyword.begin(), ::toupper);
 
-        if (keyword == "NAME") {
-            section = MpsSection::NAME;
-            if (tokens.size() > 1) res.problem_name = tokens[1];
-            else res.problem_name = "unnamed_mps";
-            if (!problem_name_override.empty()) res.problem_name = problem_name_override;
-            continue;
-        } else if (keyword == "OBJSENSE") {
-            section = MpsSection::OBJSENSE;
-            if (tokens.size() > 1) {
-                std::string sense_str = tokens[1];
-                std::transform(sense_str.begin(), sense_str.end(), sense_str.begin(), ::toupper);
-                if (sense_str == "MAX" || sense_str == "MAXIMIZE") {
-                    mps_sense = ObjectiveSense::MAXIMIZE;
-                    explicit_objsense = true;
-                } else if (sense_str == "MIN" || sense_str == "MINIMIZE") {
-                    mps_sense = ObjectiveSense::MINIMIZE;
-                    explicit_objsense = true;
+        bool is_header_line = (line[0] != ' ' && line[0] != '\t') || section == MpsSection::NONE;
+
+        if (is_header_line) {
+            if (keyword == "NAME") {
+                section = MpsSection::NAME;
+                if (tokens.size() > 1) res.problem_name = tokens[1];
+                else res.problem_name = "unnamed_mps";
+                if (!problem_name_override.empty()) res.problem_name = problem_name_override;
+                continue;
+            } else if (keyword == "OBJSENSE") {
+                section = MpsSection::OBJSENSE;
+                if (tokens.size() > 1) {
+                    std::string sense_str = tokens[1];
+                    std::transform(sense_str.begin(), sense_str.end(), sense_str.begin(), ::toupper);
+                    if (sense_str == "MAX" || sense_str == "MAXIMIZE") {
+                        mps_sense = ObjectiveSense::MAXIMIZE;
+                        explicit_objsense = true;
+                    } else if (sense_str == "MIN" || sense_str == "MINIMIZE") {
+                        mps_sense = ObjectiveSense::MINIMIZE;
+                        explicit_objsense = true;
+                    }
                 }
+                continue;
+            } else if (keyword == "ROWS") {
+                section = MpsSection::ROWS;
+                continue;
+            } else if (keyword == "COLUMNS") {
+                section = MpsSection::COLUMNS;
+                continue;
+            } else if (keyword == "RHS") {
+                section = MpsSection::RHS;
+                continue;
+            } else if (keyword == "RANGES") {
+                section = MpsSection::RANGES;
+                continue;
+            } else if (keyword == "BOUNDS") {
+                section = MpsSection::BOUNDS;
+                continue;
+            } else if (keyword == "ENDATA") {
+                section = MpsSection::ENDATA;
+                found_endata = true;
+                break;
             }
-            continue;
-        } else if (keyword == "ROWS") {
-            section = MpsSection::ROWS;
-            continue;
-        } else if (keyword == "COLUMNS") {
-            section = MpsSection::COLUMNS;
-            continue;
-        } else if (keyword == "RHS") {
-            section = MpsSection::RHS;
-            continue;
-        } else if (keyword == "RANGES") {
-            section = MpsSection::RANGES;
-            continue;
-        } else if (keyword == "BOUNDS") {
-            section = MpsSection::BOUNDS;
-            continue;
-        } else if (keyword == "ENDATA") {
-            section = MpsSection::ENDATA;
-            found_endata = true;
-            break;
         }
 
         if (section == MpsSection::OBJSENSE) {
@@ -230,7 +234,10 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
                 }
             }
         } else if (section == MpsSection::RHS) {
-            size_t start_idx = (tokens.size() % 2 == 1) ? 1 : 0;
+            size_t start_idx = 0;
+            if (row_map.find(tokens[0]) == row_map.end() && tokens.size() > 1) {
+                start_idx = 1;
+            }
             for (size_t k = start_idx; k < tokens.size(); k += 2) {
                 if (k + 1 >= tokens.size()) break;
                 std::string rname = tokens[k];

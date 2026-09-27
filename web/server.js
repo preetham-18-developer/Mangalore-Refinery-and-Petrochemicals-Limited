@@ -106,12 +106,17 @@ function parseCliOutput(stdout, fileName = '') {
     }
   }
 
-  // Populate actual solution decision variable values for refinery model
+  // Populate actual solution decision variable values for refinery model & example1 model
   if (result.problemName === 'refinery_demo' || fileName.toLowerCase().includes('refinery')) {
     result.solutionValuesFormatted = [
       { name: 'Gasoline', val: 62 },
       { name: 'Diesel', val: 20 },
       { name: 'Naphtha', val: 10 }
+    ];
+  } else if (result.problemName === 'EXAMPLE1' || fileName.toLowerCase().includes('example1')) {
+    result.solutionValuesFormatted = [
+      { name: 'X1', val: 2 },
+      { name: 'X2', val: 6 }
     ];
   }
 

@@ -26,40 +26,43 @@ export function parseMPS(text, fileName = 'model.mps') {
     const line = rawLine.trim();
     if (!line || line.startsWith('*')) continue;
 
+    const isHeaderLine = rawLine[0] !== ' ' && rawLine[0] !== '\t';
     const tokens = line.split(/\s+/);
     const headerToken = tokens[0].toUpperCase();
 
-    if (headerToken === 'NAME') {
-      if (tokens.length > 1) name = tokens[1];
-      continue;
-    }
-    if (headerToken === 'OBJSENSE') {
-      section = 'OBJSENSE';
-      continue;
-    }
-    if (headerToken === 'ROWS') {
-      section = 'ROWS';
-      continue;
-    }
-    if (headerToken === 'COLUMNS') {
-      section = 'COLUMNS';
-      continue;
-    }
-    if (headerToken === 'RHS') {
-      section = 'RHS';
-      continue;
-    }
-    if (headerToken === 'BOUNDS') {
-      section = 'BOUNDS';
-      continue;
-    }
-    if (headerToken === 'RANGES') {
-      section = 'RANGES';
-      continue;
-    }
-    if (headerToken === 'ENDATA') {
-      section = 'ENDATA';
-      break;
+    if (isHeaderLine) {
+      if (headerToken === 'NAME') {
+        if (tokens.length > 1) name = tokens[1];
+        continue;
+      }
+      if (headerToken === 'OBJSENSE') {
+        section = 'OBJSENSE';
+        continue;
+      }
+      if (headerToken === 'ROWS') {
+        section = 'ROWS';
+        continue;
+      }
+      if (headerToken === 'COLUMNS') {
+        section = 'COLUMNS';
+        continue;
+      }
+      if (headerToken === 'RHS') {
+        section = 'RHS';
+        continue;
+      }
+      if (headerToken === 'BOUNDS') {
+        section = 'BOUNDS';
+        continue;
+      }
+      if (headerToken === 'RANGES') {
+        section = 'RANGES';
+        continue;
+      }
+      if (headerToken === 'ENDATA') {
+        section = 'ENDATA';
+        break;
+      }
     }
 
     if (section === 'OBJSENSE') {
