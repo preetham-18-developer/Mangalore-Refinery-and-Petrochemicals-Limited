@@ -457,8 +457,8 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-mono">
               <div className="bg-[#060A08] p-5 rounded border border-[#14241C]">
                 <span className="text-xs text-gray-500 block uppercase">OPTIMAL OBJECTIVE</span>
-                <span className="text-3xl font-bold text-[#34D399] block mt-1">
-                  {solveResult.objective}
+                <span className={`text-3xl font-bold block mt-1 ${solveResult.status === 'INFEASIBLE' || solveResult.status === 'UNBOUNDED' ? 'text-amber-400' : 'text-[#34D399]'}`}>
+                  {solveResult.status === 'INFEASIBLE' || solveResult.status === 'UNBOUNDED' || solveResult.objective === 'N/A' ? 'N/A' : solveResult.objective}
                 </span>
               </div>
 
@@ -469,6 +469,19 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
                 </span>
               </div>
             </div>
+
+            {/* Infeasibility Diagnosis Banner */}
+            {(solveResult.status === 'INFEASIBLE' || solveResult.infeasibilityDiagnosis) && (
+              <div className="bg-[#1C1408] border border-amber-500/40 p-5 rounded font-mono text-xs space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-bold uppercase tracking-wider">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  Infeasibility Diagnosis (IIS)
+                </div>
+                <div className="text-amber-200 font-mono text-xs leading-relaxed pt-1">
+                  {solveResult.infeasibilityDiagnosis || solveResult.infeasibilitySummary || "Constraint Conflict Detected: Minimum forced value from row bounds/RANGES exceeds upper capacity or equality constraint target."}
+                </div>
+              </div>
+            )}
 
             {/* Automatically Selected Strategy */}
             <div className="bg-[#080E0B] p-4 rounded border border-[#14241C] flex items-center justify-between font-mono text-xs">

@@ -48,6 +48,7 @@ public:
     static void render_presolve_section(bool enabled, const PresolveResult* presolve_res, double presolve_time_ms);
     static void render_router_section(const RoutingDecision& decision, bool is_auto);
     static void render_solve_section(const std::string& status, real_t objective, size_t iterations, size_t nodes, double solve_time_ms, double total_time_ms);
+    static void render_infeasibility_section(const InfeasibilityDiagnosis& diag);
     static void render_verification_section(bool enabled, const VerificationResult* v_res);
     static void render_environment_section();
     static void render_benchmark_summary(const std::string& json_path = "phase-25-final-benchmark.json", const std::string& csv_path = "phase-25-final-benchmark.csv");

@@ -86,7 +86,11 @@ function parseCliOutput(stdout, fileName = '') {
     } else if (key === 'Solver Status') {
       result.status = val;
     } else if (key === 'Optimal Objective') {
-      result.objective = parseFloat(val) || 0;
+      result.objective = val.includes('N/A') ? 'N/A' : (parseFloat(val) || 0);
+    } else if (key === 'IIS Report') {
+      result.infeasibilityDiagnosis = val;
+    } else if (key === 'Diagnosis Summary') {
+      result.infeasibilitySummary = val;
     } else if (key === 'Simplex Iterations') {
       result.iterations = parseInt(val, 10) || 0;
     } else if (key === 'Solve Time') {
@@ -104,6 +108,10 @@ function parseCliOutput(stdout, fileName = '') {
     } else if (key === 'Recomputed Objective') {
       result.recomputedObjective = parseFloat(val) || 0;
     }
+  }
+
+  if (result.status === 'INFEASIBLE' || result.status === 'UNBOUNDED') {
+    result.objective = 'N/A';
   }
 
   // Populate actual solution decision variable values for refinery model & example1 model

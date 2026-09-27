@@ -13,7 +13,7 @@ COLUMNS
     X02       OBJ       5.0       C01       1.0
     X02       C02       2.0       C04       1.0
 RHS
-    RHS1      C01       8.0       C02       8.0
+    RHS1      C01       11.0      C02       10.0
     RHS1      C03       4.0       C04       3.0
 BOUNDS
  LO BND       X01       0.0

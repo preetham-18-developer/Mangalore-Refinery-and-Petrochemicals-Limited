@@ -61,12 +61,26 @@ private:
     size_t warning_count_{0};
 };
 
+struct InfeasibilityDiagnosis {
+    bool is_infeasible{false};
+    std::string summary;
+    std::vector<std::string> conflicting_rows;
+    std::string detailed_analysis;
+
+    std::string to_string() const;
+};
+
 class ModelValidator {
 public:
     ModelValidator() = default;
 
     // Read-only model validation
     ValidationResult validate(const LPModel& model) const;
+};
+
+class InfeasibilityAnalyzer {
+public:
+    static InfeasibilityDiagnosis analyze(const LPModel& model);
 };
 
 } // namespace bharatopt

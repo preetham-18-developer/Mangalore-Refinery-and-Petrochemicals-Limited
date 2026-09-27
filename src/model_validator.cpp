@@ -1,5 +1,6 @@
 #include <bharatopt/model_validator.hpp>
 #include <cmath>
+#include <iomanip>
 #include <sstream>
 #include <unordered_set>
 
@@ -202,6 +203,203 @@ ValidationResult ModelValidator::validate(const LPModel& model) const {
     }
 
     return result;
+}
+
+std::string InfeasibilityDiagnosis::to_string() const {
+    if (!is_infeasible) return "No infeasibility conflicts detected.";
+    std::ostringstream oss;
+    oss << "Constraint Conflict Detected: ";
+    if (!conflicting_rows.empty()) {
+        for (size_t i = 0; i < conflicting_rows.size(); ++i) {
+            if (i + 1 == conflicting_rows.size()) {
+                oss << " vs " << conflicting_rows[i];
+            } else {
+                oss << conflicting_rows[i] << (i + 2 < conflicting_rows.size() ? " ∩ " : "");
+            }
+        }
+    }
+    if (!detailed_analysis.empty()) {
+        oss << ", " << detailed_analysis;
+    }
+    return oss.str();
+}
+
+static std::string format_number(real_t val) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(1) << val;
+    std::string str = oss.str();
+    if (str.find('.') != std::string::npos) {
+        while (str.back() == '0') str.pop_back();
+        if (str.back() == '.') str.pop_back();
+    }
+    return str;
+}
+
+InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
+    InfeasibilityDiagnosis diag;
+    const auto& vars = model.variables();
+    const auto& constraints = model.constraints();
+
+    // 1. Variable bounds check
+    for (const auto& var : vars) {
+        if (var.lower_bound > var.upper_bound + 1e-9) {
+            diag.is_infeasible = true;
+            diag.summary = "Variable bound contradiction";
+            diag.conflicting_rows = {var.name};
+            diag.detailed_analysis = "forced min " + format_number(var.lower_bound) + " > required " + format_number(var.upper_bound);
+            return diag;
+        }
+    }
+
+    // 2. Per-row implied bounds analysis
+    struct RowBounds {
+        std::string name;
+        real_t min_lhs{0.0};
+        real_t max_lhs{0.0};
+        real_t req_lower{-BHARATOPT_INFINITY};
+        real_t req_upper{BHARATOPT_INFINITY};
+        ConstraintSense sense;
+    };
+
+    std::vector<RowBounds> row_info;
+    row_info.reserve(constraints.size());
+
+    for (const auto& cons : constraints) {
+        real_t min_lhs = 0.0;
+        real_t max_lhs = 0.0;
+        bool min_inf = false;
+        bool max_inf = false;
+
+        for (const auto& term : cons.terms) {
+            if (term.first < 0 || static_cast<size_t>(term.first) >= vars.size()) continue;
+            const auto& v = vars[static_cast<size_t>(term.first)];
+            real_t a = term.second;
+
+            if (a > 0.0) {
+                if (std::isinf(v.lower_bound)) min_inf = true;
+                else min_lhs += a * v.lower_bound;
+
+                if (std::isinf(v.upper_bound)) max_inf = true;
+                else max_lhs += a * v.upper_bound;
+            } else if (a < 0.0) {
+                if (std::isinf(v.upper_bound)) min_inf = true;
+                else min_lhs += a * v.upper_bound;
+
+                if (std::isinf(v.lower_bound)) max_inf = true;
+                else max_lhs += a * v.lower_bound;
+            }
+        }
+
+        real_t req_lower = -BHARATOPT_INFINITY;
+        real_t req_upper = BHARATOPT_INFINITY;
+
+        if (cons.sense == ConstraintSense::LESS_EQUAL) {
+            req_upper = cons.rhs;
+        } else if (cons.sense == ConstraintSense::GREATER_EQUAL) {
+            req_lower = cons.rhs;
+        } else if (cons.sense == ConstraintSense::EQUAL) {
+            req_lower = cons.rhs;
+            req_upper = cons.rhs;
+        } else if (cons.sense == ConstraintSense::RANGED) {
+            req_lower = cons.rhs;
+            req_upper = cons.range_upper;
+        }
+
+        RowBounds rb;
+        rb.name = cons.name;
+        rb.min_lhs = min_inf ? -BHARATOPT_INFINITY : min_lhs;
+        rb.max_lhs = max_inf ? BHARATOPT_INFINITY : max_lhs;
+        rb.req_lower = req_lower;
+        rb.req_upper = req_upper;
+        rb.sense = cons.sense;
+        row_info.push_back(rb);
+
+        // Check single-row impossibility
+        if (!min_inf && min_lhs > req_upper + 1e-9) {
+            diag.is_infeasible = true;
+            diag.summary = "Single row min LHS exceeds upper bound";
+            diag.conflicting_rows = {cons.name};
+            diag.detailed_analysis = "forced min " + format_number(min_lhs) + " > required " + format_number(req_upper);
+            return diag;
+        }
+        if (!max_inf && max_lhs < req_lower - 1e-9) {
+            diag.is_infeasible = true;
+            diag.summary = "Single row max LHS below lower bound";
+            diag.conflicting_rows = {cons.name};
+            diag.detailed_analysis = "forced max " + format_number(max_lhs) + " < required " + format_number(req_lower);
+            return diag;
+        }
+    }
+
+    // 3. Multi-row Overlap Analysis (Group RANGES / LO vs Target Equality/Capacity Row)
+    for (size_t target_idx = 0; target_idx < constraints.size(); ++target_idx) {
+        const auto& target_cons = constraints[target_idx];
+        const auto& target_rb = row_info[target_idx];
+        if (target_rb.req_upper == BHARATOPT_INFINITY) continue;
+
+        real_t total_forced_min = 0.0;
+        std::vector<std::string> contributor_rows;
+        std::unordered_set<std::string> added_rows;
+
+        // Compute effective lower bound for each positive variable in target constraint
+        for (const auto& term : target_cons.terms) {
+            index_t v_idx = term.first;
+            if (v_idx < 0 || static_cast<size_t>(v_idx) >= vars.size()) continue;
+            const auto& v = vars[static_cast<size_t>(v_idx)];
+            real_t coeff = term.second;
+
+            if (coeff <= 0.0) continue;
+
+            real_t eff_v_min = v.lower_bound;
+            std::string source_row = "";
+
+            // Check if any sub-constraint tightens v's lower bound
+            for (size_t sub_idx = 0; sub_idx < constraints.size(); ++sub_idx) {
+                if (sub_idx == target_idx) continue;
+                const auto& sub_cons = constraints[sub_idx];
+
+                real_t sub_bound = -BHARATOPT_INFINITY;
+                if (sub_cons.sense == ConstraintSense::GREATER_EQUAL || sub_cons.sense == ConstraintSense::EQUAL) {
+                    sub_bound = sub_cons.rhs;
+                } else if (sub_cons.sense == ConstraintSense::RANGED) {
+                    sub_bound = sub_cons.rhs;
+                } else if (sub_cons.sense == ConstraintSense::LESS_EQUAL && sub_cons.range_upper < BHARATOPT_INFINITY && sub_cons.range_upper > 0.0) {
+                    sub_bound = sub_cons.rhs - sub_cons.range_upper;
+                }
+
+                if (sub_bound > 0.0) {
+                    for (const auto& sub_term : sub_cons.terms) {
+                        if (sub_term.first == v_idx && sub_term.second > 0.0) {
+                            real_t implied_v_min = sub_bound / sub_term.second;
+                            if (implied_v_min > eff_v_min) {
+                                eff_v_min = implied_v_min;
+                                source_row = sub_cons.name;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!std::isinf(eff_v_min) && eff_v_min > 0.0) {
+                total_forced_min += coeff * eff_v_min;
+                if (!source_row.empty() && added_rows.find(source_row) == added_rows.end()) {
+                    contributor_rows.push_back(source_row);
+                    added_rows.insert(source_row);
+                }
+            }
+        }
+
+        if (total_forced_min > target_rb.req_upper + 1e-9 && !contributor_rows.empty()) {
+            diag.is_infeasible = true;
+            diag.summary = "Multi-row interval overlap contradiction";
+            contributor_rows.push_back(target_cons.name);
+            diag.conflicting_rows = contributor_rows;
+            diag.detailed_analysis = "forced min " + format_number(total_forced_min) + " > required " + format_number(target_rb.req_upper);
+            return diag;
+        }
+    }
+
+    return diag;
 }
 
 } // namespace bharatopt

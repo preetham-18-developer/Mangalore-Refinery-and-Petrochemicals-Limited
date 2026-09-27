@@ -199,11 +199,24 @@ void TerminalDashboard::render_router_section(const RoutingDecision& decision, b
 void TerminalDashboard::render_solve_section(const std::string& status, real_t objective, size_t iterations, size_t nodes, double solve_time_ms, double total_time_ms) {
     std::cout << "\n[ SOLVE ]\n";
     std::cout << "  Solver Status       : " << status << "\n";
-    std::cout << "  Optimal Objective   : " << std::fixed << std::setprecision(6) << objective << "\n";
+    if (status == "INFEASIBLE") {
+        std::cout << "  Optimal Objective   : N/A (Model is Infeasible)\n";
+    } else if (status == "UNBOUNDED") {
+        std::cout << "  Optimal Objective   : N/A (Model is Unbounded)\n";
+    } else {
+        std::cout << "  Optimal Objective   : " << std::fixed << std::setprecision(6) << objective << "\n";
+    }
     std::cout << "  Simplex Iterations  : " << iterations << "\n";
     std::cout << "  B&B Tree Nodes      : " << nodes << "\n";
     std::cout << "  Solve Time          : " << std::fixed << std::setprecision(2) << solve_time_ms << " ms\n";
     std::cout << "  Total End-to-End    : " << std::fixed << std::setprecision(2) << total_time_ms << " ms\n";
+}
+
+void TerminalDashboard::render_infeasibility_section(const InfeasibilityDiagnosis& diag) {
+    if (!diag.is_infeasible) return;
+    std::cout << "\n[ INFEASIBILITY DIAGNOSIS (IIS) ]\n";
+    std::cout << "  Diagnosis Summary   : " << diag.summary << "\n";
+    std::cout << "  IIS Report          : " << diag.to_string() << "\n";
 }
 
 void TerminalDashboard::render_verification_section(bool enabled, const VerificationResult* v_res) {
@@ -394,7 +407,20 @@ int CLIDashboardApp::run(int argc, char* argv[]) {
     auto total_end = std::chrono::high_resolution_clock::now();
     double total_time_ms = std::chrono::duration<double, std::milli>(total_end - total_start).count();
 
+    InfeasibilityDiagnosis diag = InfeasibilityAnalyzer::analyze(parse_res.model);
+    if (solve_status == "INFEASIBLE" || (presolve_res_ptr != nullptr && presolve_res_ptr->status == PresolveStatus::INFEASIBLE) || diag.is_infeasible) {
+        solve_status = "INFEASIBLE";
+        if (!diag.is_infeasible) {
+            diag.is_infeasible = true;
+            diag.summary = "Model constraint infeasibility detected";
+            diag.detailed_analysis = "Constraint lower/upper bound combination cannot be satisfied.";
+        }
+    }
+
     TerminalDashboard::render_solve_section(solve_status, objective, iterations, nodes, solve_time_ms, total_time_ms);
+    if (solve_status == "INFEASIBLE") {
+        TerminalDashboard::render_infeasibility_section(diag);
+    }
 
     // 6. Independent Solution Verification against ORIGINAL model
     std::unique_ptr<VerificationResult> v_res_ptr;
