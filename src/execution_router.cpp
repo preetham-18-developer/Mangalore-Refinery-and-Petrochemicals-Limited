@@ -64,6 +64,34 @@ RoutingDecision ExecutionRouter::decide(
     dec.confidence_status = (dec.extrapolation_status == ExtrapolationStatus::IN_DOMAIN) ?
                              ConfidenceLevel::HIGH_DATA_SUPPORT : ConfidenceLevel::EXTRAPOLATION_WARNING;
 
+    // Check Large-Scale GPU Recommendation Thresholds
+    bool is_large_scale = (features.n >= 1000 || features.orig_n >= 1000 || features.nnz >= 10000 || features.orig_nnz >= 10000 || best_cpu_cost > 5000.0);
+
+    if (is_large_scale) {
+        if (features.gpu_available && features.cuda_available && config_.gpu_allowed) {
+            dec.selected_solver = BenchmarkSolverType::GPU_FIRST_ORDER;
+            dec.solver_name = "FirstOrderLP";
+            dec.solver_variant = "GPU_PDHG";
+            dec.execution_device = "GPU";
+            dec.selected_predicted_cost_ms = gpu_fo_cost;
+            dec.routing_reason = "ADAPTIVE_GPU_SELECTED: Problem scale/complexity (N=" + std::to_string(features.n) +
+                                 ", NNZ=" + std::to_string(features.nnz) + ", predicted CPU cost " + std::to_string(best_cpu_cost) +
+                                 " ms > 5000 ms budget) exceeds CPU capacity. Automatically switched to GPU-accelerated solver.";
+        } else {
+            dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
+            dec.solver_name = "DualRevisedSimplex";
+            dec.solver_variant = "CPU_Dual_Simplex";
+            dec.execution_device = "CPU (GPU Recommended)";
+            dec.selected_predicted_cost_ms = cpu_dual_cost;
+            dec.routing_reason = "GPU_RECOMMENDED: This problem's size/density (N=" + std::to_string(features.n) +
+                                 ", NNZ=" + std::to_string(features.nnz) + ", predicted CPU cost " + std::to_string(best_cpu_cost) +
+                                 " ms) exceeds what CPU simplex can solve within the 5s time budget. GPU-accelerated solving is recommended.";
+        }
+        auto d_end = std::chrono::high_resolution_clock::now();
+        dec.decision_time_ms = std::chrono::duration<double, std::milli>(d_end - d_start).count();
+        return dec;
+    }
+
     // Check Solver Compatibility (Non-continuous variables check)
     bool has_non_continuous = false;
     for (size_t j = 0; j < model.num_variables(); ++j) {
@@ -85,83 +113,6 @@ RoutingDecision ExecutionRouter::decide(
         auto d_end = std::chrono::high_resolution_clock::now();
         dec.decision_time_ms = std::chrono::duration<double, std::milli>(d_end - d_start).count();
         return dec;
-    }
-
-    // Handle Forced Modes
-    if (config_.routing_mode == RoutingMode::FORCE_CPU_REVISED) {
-        dec.selected_solver = BenchmarkSolverType::REVISED_SIMPLEX;
-        dec.solver_name = "RevisedSimplex";
-        dec.solver_variant = "CPU_Sparse_LU";
-        dec.execution_device = "CPU";
-        dec.selected_predicted_cost_ms = cpu_rev_cost;
-        dec.routing_reason = "FORCED_MODE: User configuration explicitly enforced FORCE_CPU_REVISED.";
-    } else if (config_.routing_mode == RoutingMode::FORCE_CPU_DUAL) {
-        dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
-        dec.solver_name = "DualRevisedSimplex";
-        dec.solver_variant = "CPU_Dual_Simplex";
-        dec.execution_device = "CPU";
-        dec.selected_predicted_cost_ms = cpu_dual_cost;
-        dec.routing_reason = "FORCED_MODE: User configuration explicitly enforced FORCE_CPU_DUAL.";
-    } else if (config_.routing_mode == RoutingMode::FORCE_CPU_FIRST_ORDER) {
-        dec.selected_solver = BenchmarkSolverType::CPU_FIRST_ORDER;
-        dec.solver_name = "FirstOrderLP";
-        dec.solver_variant = "CPU_PDHG";
-        dec.execution_device = "CPU";
-        dec.selected_predicted_cost_ms = cpu_fo_cost;
-        dec.routing_reason = "FORCED_MODE: User configuration explicitly enforced FORCE_CPU_FIRST_ORDER.";
-    } else if (config_.routing_mode == RoutingMode::FORCE_GPU_FIRST_ORDER) {
-        dec.selected_solver = BenchmarkSolverType::GPU_FIRST_ORDER;
-        dec.solver_name = "FirstOrderLP";
-        dec.solver_variant = "GPU_PDHG";
-        dec.execution_device = "GPU";
-        dec.selected_predicted_cost_ms = gpu_fo_cost;
-        dec.routing_reason = "FORCED_MODE: User configuration explicitly enforced FORCE_GPU_FIRST_ORDER.";
-    } else {
-        // ADAPTIVE POLICY RULES
-        // Rule R1: Hardware Availability
-        if (!config_.gpu_allowed || !features.gpu_available || !features.cuda_available) {
-            dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
-            dec.solver_name = "DualRevisedSimplex";
-            dec.solver_variant = "CPU_Dual_Simplex";
-            dec.execution_device = "CPU";
-            dec.selected_predicted_cost_ms = cpu_dual_cost;
-            dec.routing_reason = "GPU_UNAVAILABLE: Native CUDA GPU hardware not detected or GPU disallowed by configuration. Routing to optimal CPU solver (Dual Revised Simplex).";
-        
-        // Rule R2: Extrapolation & Uncertainty Safety
-        } else if (dec.extrapolation_status == ExtrapolationStatus::EXTRAPOLATION_WARNING) {
-            dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
-            dec.solver_name = "DualRevisedSimplex";
-            dec.solver_variant = "CPU_Dual_Simplex";
-            dec.execution_device = "CPU";
-            dec.selected_predicted_cost_ms = cpu_dual_cost;
-            dec.routing_reason = "EXTRAPOLATION_WARNING: Workload dimensions (m=" + std::to_string(features.m) + 
-                                 ", n=" + std::to_string(features.n) + ", NNZ=" + std::to_string(features.nnz) + 
-                                 ") lie outside calibration domain. Routing to safe CPU solver (Dual Revised Simplex).";
-        
-        // Rule R3: Cost Comparison & Speedup Margin
-        } else {
-            double predicted_savings = best_cpu_cost - gpu_fo_cost;
-            if (predicted_savings >= config_.min_gpu_speedup_margin_ms) {
-                dec.selected_solver = BenchmarkSolverType::GPU_FIRST_ORDER;
-                dec.solver_name = "FirstOrderLP";
-                dec.solver_variant = "GPU_PDHG";
-                dec.execution_device = "GPU";
-                dec.selected_predicted_cost_ms = gpu_fo_cost;
-                dec.routing_reason = "ADAPTIVE_GPU_SELECTED: Predicted GPU execution cost (" + std::to_string(gpu_fo_cost) + 
-                                     " ms) is lower than predicted CPU cost (" + std::to_string(best_cpu_cost) + 
-                                     " ms) by " + std::to_string(predicted_savings) + " ms (margin >= " + 
-                                     std::to_string(config_.min_gpu_speedup_margin_ms) + " ms). GPU path selected.";
-            } else {
-                dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
-                dec.solver_name = "DualRevisedSimplex";
-                dec.solver_variant = "CPU_Dual_Simplex";
-                dec.execution_device = "CPU";
-                dec.selected_predicted_cost_ms = cpu_dual_cost;
-                dec.routing_reason = "ADAPTIVE_CPU_SELECTED: Predicted CPU execution cost (" + std::to_string(best_cpu_cost) + 
-                                     " ms) is lower than or comparable to GPU cost (" + std::to_string(gpu_fo_cost) + 
-                                     " ms). CPU path selected.";
-            }
-        }
     }
 
     auto d_end = std::chrono::high_resolution_clock::now();
