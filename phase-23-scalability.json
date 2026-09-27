@@ -1,0 +1,32 @@
+[
+  {
+    "experiment_id": "SCALABILITY_100x50",
+    "category": "SPARSE",
+    "m": 50,
+    "n": 100,
+    "nnz": 500,
+    "density": 0.1,
+    "representation": "CSC",
+    "generation_time_ms": 0,
+    "construction_time_ms": 0,
+    "baseline_ram_mb": 7.45312,
+    "peak_ram_mb": 297.742,
+    "matrix_memory_mb": 0.00610733,
+    "vector_memory_mb": 0.00267029,
+    "total_memory_mb": 0.00877762,
+    "gpu_available": false,
+    "native_cuda": false,
+    "gpu_name": "NOT_AVAILABLE",
+    "vram_total_mb": 0,
+    "vram_used_mb": 0,
+    "h2d_ms": 0,
+    "kernel_ms": 0,
+    "d2h_ms": 0,
+    "gpu_total_ms": 0,
+    "cpu_execution_ms": 0,
+    "solver_status": "CONSTRUCTED",
+    "execution_status": "CPU_FALLBACK",
+    "failure_reason": "",
+    "seed": 42
+  }
+]

@@ -1,0 +1,33 @@
+# Build directories & binaries
+build/
+bin/
+out/
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+*.pdb
+
+# Node.js / Web dependencies & build artifacts
+web/node_modules/
+web/dist/
+node_modules/
+dist/
+.npm
+*.log
+
+# Temporary test files
+temp_*.mps
+web/temp_*.mps
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Antigravity system files
+.gemini/
+.antigravityignore

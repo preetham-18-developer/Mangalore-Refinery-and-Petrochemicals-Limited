@@ -1,0 +1,233 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #040706;
+  --bg-secondary: #080E0B;
+  --bg-card: #0A1410;
+  --bg-card-hover: #0F1D17;
+  --bg-inset: #060A08;
+
+  --border-subtle: #14241C;
+  --border-medium: #1C3327;
+  --border-emerald: #059669;
+
+  --accent-emerald: #10B981;
+  --accent-emerald-bright: #34D399;
+  --accent-emerald-dark: #047857;
+
+  --text-primary: #F3F4F6;
+  --text-secondary: #D1D5DB;
+  --text-muted: #9CA3AF;
+  --text-dim: #6B7280;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Outfit', 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Restrained ambient top glow */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 350px;
+  background: radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.03) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+code, pre, .mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+/* Clean Card Surface */
+.eng-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.eng-card:hover {
+  border-color: var(--border-medium);
+}
+
+/* Tabular Technical Tables */
+.eng-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.eng-table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.eng-table td {
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(20, 36, 28, 0.5);
+  white-space: nowrap;
+}
+
+.eng-table tr:hover td {
+  background: rgba(16, 185, 129, 0.02);
+  color: var(--text-primary);
+}
+
+/* Status Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+
+.badge-verified {
+  background: #042F22;
+  color: #34D399;
+  border: 1px solid rgba(5, 150, 105, 0.4);
+}
+
+.badge-unavailable {
+  background: #231908;
+  color: #FBBF24;
+  border: 1px solid rgba(180, 83, 9, 0.4);
+}
+
+.badge-constructed {
+  background: #19152B;
+  color: #C084FC;
+  border: 1px solid rgba(109, 40, 217, 0.4);
+}
+
+.badge-not-comparable {
+  background: #111814;
+  color: #9CA3AF;
+  border: 1px solid rgba(55, 65, 81, 0.6);
+}
+
+/* Action Buttons */
+.btn-emerald {
+  background: #059669;
+  color: #FFFFFF;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  padding: 8px 18px;
+  border-radius: 5px;
+  border: 1px solid #10B981;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.btn-emerald:hover {
+  background: #10B981;
+  box-shadow: 0 2px 12px rgba(16, 185, 129, 0.3);
+}
+
+.btn-emerald:active {
+  transform: translateY(1px);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  padding: 8px 16px;
+  border-radius: 5px;
+  border: 1px solid var(--border-medium);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+::-webkit-scrollbar-thumb {
+  background: #14241C;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #059669;
+}
+
+/* Tab Navigation Indicator */
+.nav-tab {
+  position: relative;
+  transition: color 0.15s ease;
+}
+
+.nav-tab.active {
+  color: #F3F4F6;
+  font-weight: 600;
+}
+
+.nav-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: #10B981;
+}

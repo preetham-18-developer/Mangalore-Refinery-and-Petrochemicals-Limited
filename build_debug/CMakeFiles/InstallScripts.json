@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/PREETHAM/OneDrive/\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8/Desktop/Algorithm-Project/build_debug/cmake_install.cmake",
+		"C:/Users/PREETHAM/OneDrive/\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8/Desktop/Algorithm-Project/build_debug/tests/cmake_install.cmake",
+		"C:/Users/PREETHAM/OneDrive/\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8/Desktop/Algorithm-Project/build_debug/benchmarks/cmake_install.cmake",
+		"C:/Users/PREETHAM/OneDrive/\u30c9\u30ad\u30e5\u30e1\u30f3\u30c8/Desktop/Algorithm-Project/build_debug/examples/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

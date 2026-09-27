@@ -1,0 +1,2 @@
+add_executable(simple_model_example simple_model.cpp)
+target_link_libraries(simple_model_example PRIVATE bharatopt_core)

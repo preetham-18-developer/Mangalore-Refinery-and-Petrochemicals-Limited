@@ -1,0 +1,4 @@
+add_executable(bharatopt_tests test_main.cpp test_lp_model.cpp test_model_validator.cpp test_sparse_matrix.cpp test_presolve.cpp test_educational_simplex.cpp test_revised_simplex.cpp test_sparse_lu.cpp test_dual_revised_simplex.cpp test_basis_update.cpp test_gpu_foundation.cpp test_first_order_solver.cpp test_benchmark_framework.cpp test_cost_estimator.cpp test_execution_router.cpp test_milp_foundation.cpp test_branch_and_bound.cpp test_milp_benchmark.cpp test_lp_warm_start.cpp test_solution_verifier.cpp test_mps_parser.cpp test_ablation_study.cpp test_scalability.cpp test_numerical_stress.cpp test_final_benchmark.cpp test_cli_dashboard.cpp)
+target_link_libraries(bharatopt_tests PRIVATE bharatopt_core)
+
+add_test(NAME BharatOptUnitTests COMMAND bharatopt_tests)

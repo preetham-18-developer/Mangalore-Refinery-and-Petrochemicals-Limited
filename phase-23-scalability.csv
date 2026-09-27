@@ -1,0 +1,2 @@
+experiment_id,category,m,n,nnz,density,representation,generation_time_ms,construction_time_ms,baseline_ram_mb,peak_ram_mb,matrix_memory_mb,vector_memory_mb,total_memory_mb,gpu_available,native_cuda,gpu_name,vram_total_mb,vram_used_mb,h2d_ms,kernel_ms,d2h_ms,gpu_total_ms,cpu_execution_ms,solver_status,execution_status,failure_reason,seed
+SCALABILITY_100x50,SPARSE,50,100,500,0.10000000,CSC,0.0000,0.5110,7.4453,297.7422,0.0061,0.0027,0.0088,false,false,"NOT_AVAILABLE",0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.5110,CONSTRUCTED,CPU_FALLBACK,"",42

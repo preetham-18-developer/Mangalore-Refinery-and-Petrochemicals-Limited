@@ -1,0 +1,17 @@
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/CMakeFiles/bharatopt_core.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/CMakeFiles/bharatopt_cli.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/CMakeFiles/test.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/CMakeFiles/edit_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/CMakeFiles/rebuild_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/tests/CMakeFiles/bharatopt_tests.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/tests/CMakeFiles/test.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/tests/CMakeFiles/edit_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/tests/CMakeFiles/rebuild_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/benchmarks/CMakeFiles/bharatopt_benchmarks.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/benchmarks/CMakeFiles/test.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/benchmarks/CMakeFiles/edit_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/benchmarks/CMakeFiles/rebuild_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/examples/CMakeFiles/simple_model_example.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/examples/CMakeFiles/test.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/examples/CMakeFiles/edit_cache.dir
+C:/Users/PREETHAM/OneDrive/ドキュメント/Desktop/Algorithm-Project/build_release/examples/CMakeFiles/rebuild_cache.dir

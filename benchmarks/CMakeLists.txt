@@ -1,0 +1,2 @@
+add_executable(bharatopt_benchmarks benchmark_main.cpp)
+target_link_libraries(bharatopt_benchmarks PRIVATE bharatopt_core)

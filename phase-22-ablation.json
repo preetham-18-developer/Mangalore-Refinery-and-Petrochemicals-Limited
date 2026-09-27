@@ -1,0 +1,33 @@
+[
+  {
+    "experiment_id": "A1_PRESOLVE",
+    "component": "Presolve",
+    "baseline_config": "Presolve ON",
+    "ablated_config": "Presolve OFF",
+    "instance_name": "JsonModel",
+    "problem_type": "LP",
+    "solver_name": "RevisedSimplex",
+    "hardware": "CPU",
+    "build_type": "Release",
+    "repetitions": 2,
+    "baseline_solve_time_ms": 0.2795,
+    "ablated_solve_time_ms": 0,
+    "delta_solve_time_ms": -0.2795,
+    "percent_change_solve_time": -100,
+    "baseline_total_time_ms": 0.2795,
+    "ablated_total_time_ms": 0,
+    "delta_total_time_ms": -0.2795,
+    "percent_change_total_time": -100,
+    "baseline_iterations": 0,
+    "ablated_iterations": 0,
+    "baseline_node_count": 0,
+    "ablated_node_count": 0,
+    "baseline_objective": 0,
+    "ablated_objective": 0,
+    "baseline_verified": true,
+    "ablated_verified": true,
+    "max_residual": 0,
+    "experiment_status": "PASS",
+    "notes": "Presolve reduced rows by 0, cols by 0"
+  }
+]
