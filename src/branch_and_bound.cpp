@@ -345,24 +345,38 @@ BnBResult BranchAndBoundEngine::solve(const LPModel& model) {
         return result;
     }
 
-    // Root Primal Rounding Heuristic: Round fractional integer/binary variables to ceil
-    std::vector<real_t> heur_sol = root_node.lp_solution;
-    for (size_t j = 0; j < num_vars; ++j) {
-        if (vars[j].type == VariableType::BINARY || vars[j].type == VariableType::INTEGER) {
-            heur_sol[j] = std::ceil(heur_sol[j]);
+    // Root Primal Rounding & Sub-LP Fixing Heuristic
+    {
+        LPModel fixed_model = model;
+        for (size_t j = 0; j < num_vars; ++j) {
+            if (vars[j].type == VariableType::BINARY || vars[j].type == VariableType::INTEGER) {
+                real_t val = root_node.lp_solution[j];
+                real_t rounded = (val >= 0.5) ? 1.0 : 0.0;
+                if (vars[j].type == VariableType::INTEGER) {
+                    rounded = std::round(val);
+                }
+                auto& v = fixed_model.get_variable(static_cast<index_t>(j));
+                v.lower_bound = std::max(v.lower_bound, rounded);
+                v.upper_bound = std::min(v.upper_bound, rounded);
+            }
         }
-    }
-    IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(model, heur_sol, config_.integrality_tolerance);
-    if (heur_ver.is_integer_feasible) {
-        real_t heur_obj = model.obj_offset();
-        for (size_t j = 0; j < num_vars; ++j) heur_obj += vars[j].obj_coeff * heur_sol[j];
-        result.incumbent.has_incumbent = true;
-        result.incumbent.objective_value = heur_obj;
-        result.incumbent.solution = heur_sol;
-        result.incumbent.originating_node_id = 0;
-        result.incumbent.verification = heur_ver;
-        result.telemetry.incumbent_updates++;
-        result.telemetry.final_incumbent_obj = heur_obj;
+
+        DualRevisedSimplex heur_solver;
+        DualRevisedSimplexResult heur_res = heur_solver.solve(fixed_model);
+        if (heur_res.status == DualRevisedSimplexStatus::OPTIMAL) {
+            IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(
+                model, heur_res.primal_solution, config_.integrality_tolerance
+            );
+            if (heur_ver.is_integer_feasible) {
+                result.incumbent.has_incumbent = true;
+                result.incumbent.objective_value = heur_res.objective_value;
+                result.incumbent.solution = heur_res.primal_solution;
+                result.incumbent.originating_node_id = 0;
+                result.incumbent.verification = heur_ver;
+                result.telemetry.incumbent_updates++;
+                result.telemetry.final_incumbent_obj = heur_res.objective_value;
+            }
+        }
     }
 
     // Push root node to search queue

@@ -54,7 +54,7 @@ TEST_CASE(ProfileMilpBnbProcurementComplexTest) {
     }
 
     BnBConfig p_cfg;
-    p_cfg.time_limit_ms = 10000.0; // 10s budget
+    p_cfg.time_limit_ms = 5000.0; // Identical 5s budget
     BranchAndBoundEngine p_solver(p_cfg);
     t0 = std::chrono::high_resolution_clock::now();
     BnBResult p_res_solve = p_solver.solve(p_res.reduced_model);
