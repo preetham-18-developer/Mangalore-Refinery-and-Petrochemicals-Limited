@@ -61,6 +61,9 @@ TEST_CASE(ProfileMilpBnbProcurementComplexTest) {
     t1 = std::chrono::high_resolution_clock::now();
     double p_solve_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
+    std::vector<real_t> full_sol = p_res.postsolve.recover_solution(p_res_solve.solution);
+    real_t orig_obj = p_res.postsolve.compute_original_objective(full_sol);
+
     std::cout << "Presolved MILP Status   : " << bnb_solver_status_to_string(p_res_solve.status) << "\n";
     std::cout << "Nodes Created           : " << p_res_solve.telemetry.nodes_created << "\n";
     std::cout << "Nodes Processed         : " << p_res_solve.telemetry.nodes_processed << "\n";
@@ -69,6 +72,7 @@ TEST_CASE(ProfileMilpBnbProcurementComplexTest) {
     std::cout << "Integer Feasible Nodes  : " << p_res_solve.telemetry.integer_feasible_nodes << "\n";
     std::cout << "Presolved Solve Time    : " << p_solve_ms << " ms\n";
     std::cout << "Presolved Objective     : " << p_res_solve.objective_value << "\n";
+    std::cout << "Original Model Objective: " << orig_obj << "\n";
     std::cout << "=================================================================\n\n";
 
     EXPECT_EQ(parse_res.status, MpsParseStatus::SUCCESS);
