@@ -192,19 +192,19 @@ static LpSolveResult solve_node_lp_relaxation(
         }
     }
 
-    // Cold-Start Path: RevisedSimplex (Two-Phase Primal Simplex)
+    // Cold-Start Path: DualRevisedSimplex (Dual Simplex Method)
     res.warm_status = WarmStartStatus::COLD_START_USED;
-    RevisedSimplex primal_solver;
-    RevisedSimplexResult primal_res = primal_solver.solve(lp_model);
+    DualRevisedSimplex primal_solver;
+    DualRevisedSimplexResult primal_res = primal_solver.solve(lp_model);
 
-    if (primal_res.status == RevisedSimplexStatus::OPTIMAL) {
+    if (primal_res.status == DualRevisedSimplexStatus::OPTIMAL) {
         res.is_optimal = true;
         res.objective_value = primal_res.objective_value;
         res.solution = primal_res.primal_solution;
         res.final_basis = primal_res.final_basis;
-    } else if (primal_res.status == RevisedSimplexStatus::INFEASIBLE) {
+    } else if (primal_res.status == DualRevisedSimplexStatus::INFEASIBLE) {
         res.is_infeasible = true;
-    } else if (primal_res.status == RevisedSimplexStatus::UNBOUNDED) {
+    } else if (primal_res.status == DualRevisedSimplexStatus::UNBOUNDED) {
         res.is_unbounded = true;
     }
 
@@ -343,6 +343,26 @@ BnBResult BranchAndBoundEngine::solve(const LPModel& model) {
         auto t_end = std::chrono::high_resolution_clock::now();
         result.telemetry.total_solve_time_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         return result;
+    }
+
+    // Root Primal Rounding Heuristic: Round fractional integer/binary variables to ceil
+    std::vector<real_t> heur_sol = root_node.lp_solution;
+    for (size_t j = 0; j < num_vars; ++j) {
+        if (vars[j].type == VariableType::BINARY || vars[j].type == VariableType::INTEGER) {
+            heur_sol[j] = std::ceil(heur_sol[j]);
+        }
+    }
+    IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(model, heur_sol, config_.integrality_tolerance);
+    if (heur_ver.is_integer_feasible) {
+        real_t heur_obj = model.obj_offset();
+        for (size_t j = 0; j < num_vars; ++j) heur_obj += vars[j].obj_coeff * heur_sol[j];
+        result.incumbent.has_incumbent = true;
+        result.incumbent.objective_value = heur_obj;
+        result.incumbent.solution = heur_sol;
+        result.incumbent.originating_node_id = 0;
+        result.incumbent.verification = heur_ver;
+        result.telemetry.incumbent_updates++;
+        result.telemetry.final_incumbent_obj = heur_obj;
     }
 
     // Push root node to search queue

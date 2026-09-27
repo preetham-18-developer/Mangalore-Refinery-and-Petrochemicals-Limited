@@ -363,9 +363,60 @@ PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
                 }
             }
         }
+
+        // Pass E: Big-M Coefficient Tightening
+        for (size_t i = 0; i < num_cons; ++i) {
+            if (!active_cons[i]) continue;
+            auto& terms = work_cons[i].terms;
+            if (work_cons[i].sense != ConstraintSense::LESS_EQUAL) continue;
+
+            for (auto& term : terms) {
+                index_t v_idx = term.first;
+                size_t j = static_cast<size_t>(v_idx);
+                if (!active_vars[j]) continue;
+
+                if (work_vars[j].type == VariableType::BINARY && term.second < -1e-5) {
+                    real_t cur_coeff = term.second;
+
+                    real_t max_pos_sum = 0.0;
+                    bool can_bound = true;
+
+                    for (const auto& o_term : terms) {
+                        if (o_term.first == v_idx) continue;
+                        size_t oj = static_cast<size_t>(o_term.first);
+                        if (!active_vars[oj]) continue;
+
+                        if (o_term.second > 0.0) {
+                            if (std::isinf(work_vars[oj].upper_bound)) {
+                                can_bound = false;
+                                break;
+                            }
+                            max_pos_sum += o_term.second * work_vars[oj].upper_bound;
+                        } else if (o_term.second < 0.0) {
+                            if (!std::isinf(work_vars[oj].lower_bound)) {
+                                max_pos_sum += o_term.second * work_vars[oj].lower_bound;
+                            }
+                        }
+                    }
+
+                    if (can_bound && max_pos_sum > 0.0) {
+                        real_t required_m = max_pos_sum - work_cons[i].rhs;
+                        if (required_m > 0.0 && -cur_coeff > required_m + 1e-4) {
+                            term.second = -required_m;
+                            changed = true;
+                            result.stats.transformations.push_back({
+                                ReductionType::BOUND_TIGHTENING,
+                                "Tightened Big-M coefficient on " + work_cons[i].name + " for " + work_vars[j].name + " from " + std::to_string(cur_coeff) + " to -" + std::to_string(required_m),
+                                work_vars[j].name, static_cast<index_t>(j), static_cast<index_t>(i), -required_m
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // Pass E: Build Reduced LPModel
+    // Pass F: Build Reduced LPModel
     LPModel reduced("reduced_" + orig_model.name());
     reduced.set_sense(sense);
     reduced.set_obj_offset(work_obj_offset);
