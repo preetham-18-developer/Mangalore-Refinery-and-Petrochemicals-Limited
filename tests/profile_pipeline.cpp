@@ -99,15 +99,15 @@ static PipelineStageTimings profile_model(const std::string& filepath) {
         else if (b_res.status == BnBSolverStatus::INFEASIBLE) t.final_status = "INFEASIBLE";
         else t.final_status = "TIME_LIMIT_REACHED";
     } else {
-        RevisedSimplexOptions r_opts;
-        r_opts.max_iterations = 5000;
-        RevisedSimplex solver(r_opts);
-        RevisedSimplexResult r_res = solver.solve(active_model);
-        solution = r_res.primal_solution;
-        obj = r_res.objective_value;
-        if (r_res.status == RevisedSimplexStatus::OPTIMAL) t.final_status = "OPTIMAL";
-        else if (r_res.status == RevisedSimplexStatus::INFEASIBLE) t.final_status = "INFEASIBLE";
-        else if (r_res.status == RevisedSimplexStatus::UNBOUNDED) t.final_status = "UNBOUNDED";
+        DualRevisedSimplexOptions d_opts;
+        d_opts.max_iterations = 5000;
+        DualRevisedSimplex solver(d_opts);
+        DualRevisedSimplexResult d_res = solver.solve(active_model);
+        solution = d_res.primal_solution;
+        obj = d_res.objective_value;
+        if (d_res.status == DualRevisedSimplexStatus::OPTIMAL) t.final_status = "OPTIMAL";
+        else if (d_res.status == DualRevisedSimplexStatus::INFEASIBLE) t.final_status = "INFEASIBLE";
+        else if (d_res.status == DualRevisedSimplexStatus::UNBOUNDED) t.final_status = "UNBOUNDED";
         else t.final_status = "TIME_LIMIT_REACHED";
     }
     t1 = std::chrono::high_resolution_clock::now();
@@ -154,6 +154,7 @@ TEST_CASE(PipelineStageProfilingTest) {
     std::vector<std::string> test_models = {
         "example1.mps",
         "procurement_lp_test.mps",
+        "procurement_lp_complex.mps",
         "benchmarks/netlib/afiro.mps",
         "benchmarks/netlib/share2b.mps",
         "benchmarks/miplib/p0033.mps",

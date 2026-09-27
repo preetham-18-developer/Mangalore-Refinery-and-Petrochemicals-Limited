@@ -74,18 +74,20 @@ RoutingDecision ExecutionRouter::decide(
             dec.solver_variant = "GPU_PDHG";
             dec.execution_device = "GPU";
             dec.selected_predicted_cost_ms = gpu_fo_cost;
-            dec.routing_reason = "ADAPTIVE_GPU_SELECTED: Problem scale/complexity (N=" + std::to_string(features.n) +
+            dec.routing_reason = "ADAPTIVE_GPU_SELECTED: Problem scale (orig_n=" + std::to_string(features.orig_n) +
+                                 ", orig_nnz=" + std::to_string(features.orig_nnz) + "; reduced N=" + std::to_string(features.n) +
                                  ", NNZ=" + std::to_string(features.nnz) + ", predicted CPU cost " + std::to_string(best_cpu_cost) +
-                                 " ms > 5000 ms budget) exceeds CPU capacity. Automatically switched to GPU-accelerated solver.";
+                                 " ms) meets/exceeds large-scale threshold (orig_n >= 1000). Automatically switched to GPU-accelerated solver.";
         } else {
             dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
             dec.solver_name = "DualRevisedSimplex";
             dec.solver_variant = "CPU_Dual_Simplex";
             dec.execution_device = "CPU (GPU Recommended)";
             dec.selected_predicted_cost_ms = cpu_dual_cost;
-            dec.routing_reason = "GPU_RECOMMENDED: This problem's size/density (N=" + std::to_string(features.n) +
+            dec.routing_reason = "GPU_RECOMMENDED: Problem scale (orig_n=" + std::to_string(features.orig_n) +
+                                 ", orig_nnz=" + std::to_string(features.orig_nnz) + "; reduced N=" + std::to_string(features.n) +
                                  ", NNZ=" + std::to_string(features.nnz) + ", predicted CPU cost " + std::to_string(best_cpu_cost) +
-                                 " ms) exceeds what CPU simplex can solve within the 5s time budget. GPU-accelerated solving is recommended.";
+                                 " ms) meets/exceeds large-scale threshold (orig_n >= 1000). GPU-accelerated solving is recommended.";
         }
         auto d_end = std::chrono::high_resolution_clock::now();
         dec.decision_time_ms = std::chrono::duration<double, std::milli>(d_end - d_start).count();

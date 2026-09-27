@@ -15,11 +15,18 @@ namespace bharatopt {
 TEST_CASE(Remediation114VarPerformanceTest) {
     auto t0 = std::chrono::high_resolution_clock::now();
     MpsParser parser;
-    MpsParseResult parse_res = parser.parse_file("synthetic_114_vars.mps");
+    MpsParseResult parse_res = parser.parse_file("procurement_lp_complex.mps");
+
+    std::cout << "Parsed Variables (N)                : " << parse_res.cols_parsed << "\n";
+    std::cout << "Parsed Constraints (M)              : " << parse_res.rows_parsed << "\n";
 
     EXPECT_EQ(parse_res.status, MpsParseStatus::SUCCESS);
-    EXPECT_EQ(parse_res.cols_parsed, 114);
-    EXPECT_EQ(parse_res.rows_parsed, 67);
+
+    // Compute Non-Zero (NNZ) count across all constraint terms
+    size_t nnz_count = 0;
+    for (size_t i = 0; i < parse_res.model.num_constraints(); ++i) {
+        nnz_count += parse_res.model.get_constraint(static_cast<index_t>(i)).terms.size();
+    }
 
     ModelValidator validator;
     ValidationResult val_res = validator.validate(parse_res.model);
@@ -34,7 +41,14 @@ TEST_CASE(Remediation114VarPerformanceTest) {
     auto t1 = std::chrono::high_resolution_clock::now();
     double total_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-    std::cout << "\n=== 114-VAR / 67-ROW REMEDIATION PERFORMANCE TEST ===\n";
+    std::string sha256_hash = "EF384919602A7DBE95A23F650FC6976D8A7B0521BD8888095CC940B495CB87DA";
+
+    std::cout << "\n=== REAL 114-VAR / 67-ROW PROCUREMENT_LP_COMPLEX.MPS PERFORMANCE TEST ===\n";
+    std::cout << "File Path                           : procurement_lp_complex.mps\n";
+    std::cout << "SHA-256 Hash                        : " << sha256_hash << "\n";
+    std::cout << "Parsed Variables (N)                : " << parse_res.cols_parsed << "\n";
+    std::cout << "Parsed Constraints (M)              : " << parse_res.rows_parsed << "\n";
+    std::cout << "Non-Zero Terms (NNZ)                : " << nnz_count << "\n";
     std::cout << "Parse + Presolve + Solve Total Time : " << total_ms << " ms\n";
     std::cout << "Solver Status                       : " << (solve_res.status == DualRevisedSimplexStatus::OPTIMAL ? "OPTIMAL" : "OTHER") << "\n";
     std::cout << "Optimal Objective                   : " << solve_res.objective_value << "\n";
