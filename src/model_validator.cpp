@@ -337,57 +337,116 @@ InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
         const auto& target_rb = row_info[target_idx];
         if (target_rb.req_upper == BHARATOPT_INFINITY) continue;
 
-        real_t total_forced_min = 0.0;
-        std::vector<std::string> contributor_rows;
-        std::unordered_set<std::string> added_rows;
-
-        // Compute effective lower bound for each positive variable in target constraint
+        // Map variable index to target coefficient c_j (for c_j > 0)
+        std::unordered_map<index_t, real_t> target_coeffs;
         for (const auto& term : target_cons.terms) {
-            index_t v_idx = term.first;
-            if (v_idx < 0 || static_cast<size_t>(v_idx) >= vars.size()) continue;
-            const auto& v = vars[static_cast<size_t>(v_idx)];
-            real_t coeff = term.second;
+            if (term.first >= 0 && static_cast<size_t>(term.first) < vars.size() && term.second > 0.0) {
+                target_coeffs[term.first] = term.second;
+            }
+        }
+        if (target_coeffs.empty()) continue;
 
-            if (coeff <= 0.0) continue;
+        // Individual variable lower bounds (updated by singleton rows)
+        std::unordered_map<index_t, real_t> eff_var_lb;
+        for (const auto& kv : target_coeffs) {
+            index_t v_idx = kv.first;
+            real_t lb = vars[static_cast<size_t>(v_idx)].lower_bound;
+            eff_var_lb[v_idx] = (std::isinf(lb) || lb < 0.0) ? 0.0 : lb;
+        }
 
-            real_t eff_v_min = v.lower_bound;
-            std::string source_row = "";
+        // Identify candidate sub-constraints S that provide a lower bound on a subset of target variables
+        struct SubGroup {
+            std::string name;
+            real_t forced_min_contribution{0.0};
+            std::unordered_set<index_t> var_set;
+        };
+        std::vector<SubGroup> candidate_groups;
 
-            // Check if any sub-constraint tightens v's lower bound
-            for (size_t sub_idx = 0; sub_idx < constraints.size(); ++sub_idx) {
-                if (sub_idx == target_idx) continue;
-                const auto& sub_cons = constraints[sub_idx];
+        for (size_t sub_idx = 0; sub_idx < constraints.size(); ++sub_idx) {
+            if (sub_idx == target_idx) continue;
+            const auto& sub_cons = constraints[sub_idx];
 
-                real_t sub_bound = -BHARATOPT_INFINITY;
-                if (sub_cons.sense == ConstraintSense::GREATER_EQUAL || sub_cons.sense == ConstraintSense::EQUAL) {
-                    sub_bound = sub_cons.rhs;
-                } else if (sub_cons.sense == ConstraintSense::RANGED) {
-                    sub_bound = sub_cons.rhs;
-                } else if (sub_cons.sense == ConstraintSense::LESS_EQUAL && sub_cons.range_upper < BHARATOPT_INFINITY && sub_cons.range_upper > 0.0) {
-                    sub_bound = sub_cons.rhs - sub_cons.range_upper;
-                }
-
-                if (sub_bound > 0.0) {
-                    for (const auto& sub_term : sub_cons.terms) {
-                        if (sub_term.first == v_idx && sub_term.second > 0.0) {
-                            real_t implied_v_min = sub_bound / sub_term.second;
-                            if (implied_v_min > eff_v_min) {
-                                eff_v_min = implied_v_min;
-                                source_row = sub_cons.name;
-                            }
-                        }
-                    }
-                }
+            real_t sub_bound = -BHARATOPT_INFINITY;
+            if (sub_cons.sense == ConstraintSense::GREATER_EQUAL || sub_cons.sense == ConstraintSense::EQUAL) {
+                sub_bound = sub_cons.rhs;
+            } else if (sub_cons.sense == ConstraintSense::RANGED) {
+                sub_bound = sub_cons.rhs; // For ranged row (L-type or E-type), rhs is lower bound
             }
 
-            if (!std::isinf(eff_v_min) && eff_v_min > 0.0) {
-                total_forced_min += coeff * eff_v_min;
-                if (!source_row.empty() && added_rows.find(source_row) == added_rows.end()) {
-                    contributor_rows.push_back(source_row);
-                    added_rows.insert(source_row);
+            if (sub_bound <= 0.0) continue;
+
+            // Check if all variables in sub_cons belong to target_coeffs and have matching scale s_S
+            bool valid = true;
+            real_t scale = -1.0;
+            std::unordered_set<index_t> sub_vars;
+
+            for (const auto& sterm : sub_cons.terms) {
+                index_t sv = sterm.first;
+                real_t sa = sterm.second;
+                if (sa <= 0.0 || target_coeffs.find(sv) == target_coeffs.end()) {
+                    valid = false;
+                    break;
+                }
+                real_t tc = target_coeffs[sv];
+                real_t r = sa / tc;
+                if (scale < 0.0) {
+                    scale = r;
+                } else if (std::abs(r - scale) > 1e-6) {
+                    valid = false;
+                    break;
+                }
+                sub_vars.insert(sv);
+            }
+
+            if (!valid || scale <= 0.0 || sub_vars.empty()) continue;
+
+            real_t contribution = sub_bound / scale;
+
+            if (sub_vars.size() == 1) {
+                // Singleton constraint: update individual lower bound
+                index_t sv = *sub_vars.begin();
+                if (contribution > eff_var_lb[sv]) {
+                    eff_var_lb[sv] = contribution;
+                }
+            } else {
+                // Group constraint
+                candidate_groups.push_back({sub_cons.name, contribution, sub_vars});
+            }
+        }
+
+        // Greedy selection of mutually disjoint group constraints that maximize forced lower bound contribution
+        std::vector<std::string> contributor_rows;
+        std::unordered_set<index_t> covered_vars;
+        real_t total_group_min = 0.0;
+
+        for (const auto& grp : candidate_groups) {
+            bool overlaps = false;
+            for (index_t v : grp.var_set) {
+                if (covered_vars.count(v) > 0) {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if (!overlaps) {
+                total_group_min += grp.forced_min_contribution;
+                contributor_rows.push_back(grp.name);
+                for (index_t v : grp.var_set) {
+                    covered_vars.insert(v);
                 }
             }
         }
+
+        // Add contribution from uncovered variables using their individual lower bounds
+        real_t total_indiv_min = 0.0;
+        for (const auto& kv : target_coeffs) {
+            index_t v_idx = kv.first;
+            real_t c_j = kv.second;
+            if (covered_vars.count(v_idx) == 0) {
+                total_indiv_min += c_j * eff_var_lb[v_idx];
+            }
+        }
+
+        real_t total_forced_min = total_group_min + total_indiv_min;
 
         if (total_forced_min > target_rb.req_upper + 1e-9 && !contributor_rows.empty()) {
             diag.is_infeasible = true;

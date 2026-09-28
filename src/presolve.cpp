@@ -137,6 +137,7 @@ std::string PresolveResult::to_string() const {
 
 PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
     auto start_time = std::chrono::high_resolution_clock::now();
+    auto is_infinite_bound = [](real_t val) { return std::isinf(val) || std::abs(val) >= 1e19; };
 
     PresolveResult result;
     result.postsolve.initialize(orig_model);
@@ -272,22 +273,22 @@ PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
                 bool fix_var = false;
 
                 if (cj == 0.0) {
-                    fix_val = !std::isinf(lb) ? lb : (!std::isinf(ub) ? ub : 0.0);
+                    fix_val = !is_infinite_bound(lb) ? lb : (!is_infinite_bound(ub) ? ub : 0.0);
                     fix_var = true;
                 } else if (sense == ObjectiveSense::MINIMIZE) {
                     if (cj > 0.0) {
-                        if (!std::isinf(lb)) { fix_val = lb; fix_var = true; }
+                        if (!is_infinite_bound(lb)) { fix_val = lb; fix_var = true; }
                         else { result.status = PresolveStatus::UNBOUNDED; }
                     } else {
-                        if (!std::isinf(ub)) { fix_val = ub; fix_var = true; }
+                        if (!is_infinite_bound(ub)) { fix_val = ub; fix_var = true; }
                         else { result.status = PresolveStatus::UNBOUNDED; }
                     }
                 } else { // MAXIMIZE
                     if (cj > 0.0) {
-                        if (!std::isinf(ub)) { fix_val = ub; fix_var = true; }
+                        if (!is_infinite_bound(ub)) { fix_val = ub; fix_var = true; }
                         else { result.status = PresolveStatus::UNBOUNDED; }
                     } else {
-                        if (!std::isinf(lb)) { fix_val = lb; fix_var = true; }
+                        if (!is_infinite_bound(lb)) { fix_val = lb; fix_var = true; }
                         else { result.status = PresolveStatus::UNBOUNDED; }
                     }
                 }
@@ -340,6 +341,15 @@ PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
                     } else if (csense == ConstraintSense::EQUAL) {
                         new_lb = val;
                         new_ub = val;
+                    } else if (csense == ConstraintSense::RANGED) {
+                        real_t u_val = work_cons[i].range_upper / a;
+                        if (a > 0.0) {
+                            new_lb = val;
+                            new_ub = u_val;
+                        } else {
+                            new_lb = u_val;
+                            new_ub = val;
+                        }
                     }
 
                     // Tighten bounds

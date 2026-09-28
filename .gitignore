@@ -1,5 +1,7 @@
 # Build directories & binaries
 build/
+build_release/
+build_debug/
 bin/
 out/
 *.exe
@@ -9,6 +11,7 @@ out/
 *.so
 *.dylib
 *.pdb
+*.test.mps
 
 # Node.js / Web dependencies & build artifacts
 web/node_modules/

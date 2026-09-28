@@ -263,7 +263,7 @@ StandardFormLP RevisedSimplex::create_standard_form(const LPModel& model) const 
             col_obj_coeffs.push_back(-var.obj_coeff * sense_factor);
         } else {
             real_t shift = 0.0;
-            if (!std::isinf(lb) && lb != 0.0) {
+            if (!std::isinf(lb) && lb != 0.0 && lb > -BHARATOPT_INFINITY) {
                 shift = lb;
             }
             std_lp.var_shifts[j] = shift;

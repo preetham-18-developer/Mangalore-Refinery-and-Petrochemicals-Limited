@@ -351,6 +351,10 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
     if (explicit_objsense) {
         model.set_sense(mps_sense);
     }
+    auto it_obj_rhs = rhs_map.find(obj_row_name);
+    if (it_obj_rhs != rhs_map.end()) {
+        model.set_obj_offset(-it_obj_rhs->second);
+    }
 
     std::unordered_map<std::string, index_t> var_idx_map;
     size_t int_cnt = 0, bin_cnt = 0;
@@ -363,7 +367,7 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
         auto it_b = bound_map.find(vname);
         if (it_b != bound_map.end()) {
             const auto& bdef = it_b->second;
-            if (bdef.is_free) {
+            if (bdef.is_free || (bdef.lb <= -BHARATOPT_INFINITY && bdef.ub >= BHARATOPT_INFINITY)) {
                 lb = -BHARATOPT_INFINITY;
                 ub = BHARATOPT_INFINITY;
             } else {
@@ -412,8 +416,12 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
             csense = ConstraintSense::RANGED;
             real_t rval = it_rng->second;
             if (rdef.type == 'E') {
-                if (rval > 0) { range_up = rhs_val + rval; }
-                else { rhs_val = rhs_val + rval; range_up = rhs_val; }
+                if (rval > 0) {
+                    range_up = rhs_val + rval;
+                } else {
+                    range_up = rhs_val;
+                    rhs_val = rhs_val + rval;
+                }
             } else if (rdef.type == 'L') {
                 range_up = rhs_val;
                 rhs_val = rhs_val - std::abs(rval);

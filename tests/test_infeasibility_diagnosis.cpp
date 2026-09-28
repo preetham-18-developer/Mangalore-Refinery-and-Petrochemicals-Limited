@@ -66,6 +66,32 @@ TEST_CASE(InfeasibilityDiagnosisTest) {
 
     EXPECT_TRUE(diag2.is_infeasible);
     EXPECT_TRUE(diag2.to_string().find("1150") != std::string::npos || diag2.to_string().find("forced min") != std::string::npos);
+
+    // 3. Regression test: Genuine Infeasible MPS (procurement_lp_test.mps)
+    MpsParseResult proc_orig = parser.parse_file("procurement_lp_test.mps");
+    EXPECT_EQ(static_cast<int>(proc_orig.status), static_cast<int>(MpsParseStatus::SUCCESS));
+    InfeasibilityDiagnosis diag_orig = InfeasibilityAnalyzer::analyze(proc_orig.model);
+    std::cout << "\n=== REGRESSION TEST: procurement_lp_test.mps (ORIGINAL INFEASIBLE) ===\n";
+    std::cout << "Is Infeasible: " << (diag_orig.is_infeasible ? "YES" : "NO") << "\n";
+    std::cout << "Conflicting Rows: ";
+    for (size_t r = 0; r < diag_orig.conflicting_rows.size(); ++r) {
+        std::cout << diag_orig.conflicting_rows[r] << (r + 1 < diag_orig.conflicting_rows.size() ? " ∩ " : "");
+    }
+    std::cout << "\nIIS String   : " << diag_orig.to_string() << "\n";
+    EXPECT_TRUE(diag_orig.is_infeasible);
+
+    // 4. Regression test: Feasible Fixed MPS (procurement_lp_test_fixed.mps)
+    MpsParseResult proc_fixed = parser.parse_file("procurement_lp_test_fixed.mps");
+    EXPECT_EQ(static_cast<int>(proc_fixed.status), static_cast<int>(MpsParseStatus::SUCCESS));
+    InfeasibilityDiagnosis diag_fixed = InfeasibilityAnalyzer::analyze(proc_fixed.model);
+    std::cout << "\n=== REGRESSION TEST: procurement_lp_test_fixed.mps (FIXED FEASIBLE) ===\n";
+    std::cout << "Is Infeasible: " << (diag_fixed.is_infeasible ? "YES" : "NO") << "\n";
+    if (diag_fixed.is_infeasible) {
+        std::cout << "ERRONEOUS Conflicting Rows: ";
+        for (const auto& r : diag_fixed.conflicting_rows) std::cout << r << " ";
+        std::cout << "\n";
+    }
+    EXPECT_FALSE(diag_fixed.is_infeasible);
 }
 
 } // namespace bharatopt

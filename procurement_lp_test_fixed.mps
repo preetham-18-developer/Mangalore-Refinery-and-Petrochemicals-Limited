@@ -1,12 +1,10 @@
 * ============================================================
-* PROCUREMENT_LP - Test MPS file
-* Models: assignment of farmers to (Procurement Center x Time Slot)
-* slots to minimize total waiting + transport cost, subject to
-* per-slot capacity, per-center minimum service demand, total
-* farmer throughput, and a budget cap.
-*
-* 5 centers (C1-C5) x 4 time slots (S1-S4) = 20 decision vars
-* Variable X_i_j = farmers assigned from center i to slot j
+* PROCUREMENT_LP - Test MPS file (FIXED)
+* Pure continuous LP. Previous version had RANGES on the
+* SLOT*CAP rows that forced a combined minimum of 1150 units
+* across slots, contradicting TOTFARM = 1000 (equality row) ->
+* infeasible. Ranges removed; slots are now plain <= caps.
+* Integer MARKER block also removed (this is an LP, not a MIP).
 * ============================================================
 NAME          PROCUREMENT_LP
 ROWS
@@ -24,7 +22,6 @@ ROWS
  L  BUDGET
  L  PEAKSHARE
 COLUMNS
-    MARKER1   'MARKER'                 'INTORG'
     X1_1      COST         12.0   SLOT1CAP      1.0
     X1_1      CTRDEM1       1.0   TOTFARM       1.0
     X1_1      BUDGET       12.0   PEAKSHARE     1.0
@@ -85,7 +82,6 @@ COLUMNS
     X5_4      COST         14.0   SLOT4CAP      1.0
     X5_4      CTRDEM5       1.0   TOTFARM       1.0
     X5_4      BUDGET       14.0
-    MARKER2   'MARKER'                 'INTEND'
 RHS
     RHS       SLOT1CAP    400.0   SLOT2CAP    350.0
     RHS       SLOT3CAP    300.0   SLOT4CAP    250.0
@@ -93,9 +89,6 @@ RHS
     RHS       CTRDEM3     180.0   CTRDEM4     100.0
     RHS       CTRDEM5     140.0   TOTFARM    1000.0
     RHS       BUDGET    14000.0   PEAKSHARE   380.0
-RANGES
-    RNG       SLOT1CAP     50.0   SLOT2CAP     40.0
-    RNG       SLOT3CAP     30.0   SLOT4CAP     30.0
 BOUNDS
  UP BND       X1_1         90.0
  UP BND       X1_2         90.0

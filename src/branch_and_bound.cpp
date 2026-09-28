@@ -192,7 +192,7 @@ static LpSolveResult solve_node_lp_relaxation(
         }
     }
 
-    // Cold-Start Path: DualRevisedSimplex (Dual Simplex Method)
+    // Cold-Start Path: DualRevisedSimplex with RevisedSimplex fallback
     res.warm_status = WarmStartStatus::COLD_START_USED;
     DualRevisedSimplex primal_solver;
     DualRevisedSimplexResult primal_res = primal_solver.solve(lp_model);
@@ -206,6 +206,20 @@ static LpSolveResult solve_node_lp_relaxation(
         res.is_infeasible = true;
     } else if (primal_res.status == DualRevisedSimplexStatus::UNBOUNDED) {
         res.is_unbounded = true;
+    } else {
+        RevisedSimplexOptions r_opts;
+        RevisedSimplex rev_solver(r_opts);
+        RevisedSimplexResult r_res = rev_solver.solve(lp_model);
+        if (r_res.status == RevisedSimplexStatus::OPTIMAL) {
+            res.is_optimal = true;
+            res.objective_value = r_res.objective_value;
+            res.solution = r_res.primal_solution;
+            res.final_basis = r_res.final_basis;
+        } else if (r_res.status == RevisedSimplexStatus::INFEASIBLE) {
+            res.is_infeasible = true;
+        } else if (r_res.status == RevisedSimplexStatus::UNBOUNDED) {
+            res.is_unbounded = true;
+        }
     }
 
     return res;

@@ -443,10 +443,17 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="badge badge-verified text-xs px-2.5 py-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Solution verified
-                </span>
+                {solveResult.status === 'OPTIMAL' && (
+                  <span className="badge badge-verified text-xs px-2.5 py-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Solution verified
+                  </span>
+                )}
+                {solveResult.status === 'INFEASIBLE' && (
+                  <span className="badge bg-amber-950/80 text-amber-400 border border-amber-500/40 text-xs px-2.5 py-1 font-mono font-bold">
+                    VERIFIED INFEASIBLE PROOF
+                  </span>
+                )}
                 <span className="badge bg-[#042F22] text-[#34D399] border border-[#059669]/40 text-xs px-2.5 py-1 font-mono font-bold">
                   {solveResult.status}
                 </span>
