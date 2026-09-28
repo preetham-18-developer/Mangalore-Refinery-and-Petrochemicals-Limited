@@ -53,6 +53,28 @@ TEST_CASE(ProfileMilpBnbProcurementComplexTest) {
         }
     }
 
+    // 3. Test WITH OPEN=1 Seeded Incumbent Heuristic
+    std::cout << "\n--- TEST 3: MILP B&B WITH SEEDED OPEN=1 INCUMBENT HEURISTIC ---\n";
+    LPModel open1_fixed_model = p_res.reduced_model;
+    for (size_t j = 0; j < open1_fixed_model.num_variables(); ++j) {
+        const auto& v = open1_fixed_model.get_variable(static_cast<index_t>(j));
+        if (v.type == VariableType::BINARY || v.type == VariableType::INTEGER) {
+            auto& mod_v = open1_fixed_model.get_variable(static_cast<index_t>(j));
+            mod_v.lower_bound = 1.0;
+            mod_v.upper_bound = 1.0;
+        }
+    }
+
+    DualRevisedSimplex seed_solver;
+    DualRevisedSimplexResult seed_lp_res = seed_solver.solve(open1_fixed_model);
+
+    std::cout << "Seeded Sub-LP Status    : " << (seed_lp_res.status == DualRevisedSimplexStatus::OPTIMAL ? "OPTIMAL" : "OTHER") << "\n";
+    if (seed_lp_res.status == DualRevisedSimplexStatus::OPTIMAL) {
+        std::vector<real_t> full_seed_sol = p_res.postsolve.recover_solution(seed_lp_res.primal_solution);
+        real_t seed_orig_obj = p_res.postsolve.compute_original_objective(full_seed_sol);
+        std::cout << "Seeded Integer Objective: " << seed_orig_obj << "\n";
+    }
+
     BnBConfig p_cfg;
     p_cfg.time_limit_ms = 5000.0; // Identical 5s budget
     BranchAndBoundEngine p_solver(p_cfg);

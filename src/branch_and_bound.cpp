@@ -345,60 +345,42 @@ BnBResult BranchAndBoundEngine::solve(const LPModel& model) {
         return result;
     }
 
-    // Root Feasibility Pump & Grouped Top-K Primal Fixing Heuristic
+    // Root Feasibility Pump & "Round Up If LP > 0" Primal Fixing Heuristic
     {
-        std::vector<size_t> bin_indices;
+        LPModel all_one_model = model;
         for (size_t j = 0; j < num_vars; ++j) {
             if (vars[j].type == VariableType::BINARY || vars[j].type == VariableType::INTEGER) {
-                bin_indices.push_back(j);
+                real_t val = root_node.lp_solution[j];
+                real_t rounded = (val > 1e-6) ? 1.0 : 0.0;
+                if (vars[j].type == VariableType::INTEGER && val > 1.0) {
+                    rounded = std::ceil(val);
+                }
+                auto& v = all_one_model.get_variable(static_cast<index_t>(j));
+                v.lower_bound = std::max(v.lower_bound, rounded);
+                v.upper_bound = std::min(v.upper_bound, rounded);
             }
         }
 
-        if (!bin_indices.empty()) {
-            // Sort binary variables by LP relaxation value descending
-            std::vector<std::pair<real_t, size_t>> sorted_bins;
-            for (size_t j : bin_indices) {
-                sorted_bins.push_back({root_node.lp_solution[j], j});
-            }
-            std::sort(sorted_bins.rbegin(), sorted_bins.rend());
-
-            // Try fixing top-K binaries to 1.0 (for K = 12, 13, 14, 15, 16, 18)
-            std::vector<size_t> top_k_counts = {12, 13, 14, 15, 16, 18};
-            for (size_t k_count : top_k_counts) {
-                if (k_count > sorted_bins.size()) k_count = sorted_bins.size();
-
-                LPModel fixed_model = model;
-                for (size_t idx = 0; idx < sorted_bins.size(); ++idx) {
-                    size_t j = sorted_bins[idx].second;
-                    real_t rounded = (idx < k_count) ? 1.0 : 0.0;
-                    auto& v = fixed_model.get_variable(static_cast<index_t>(j));
-                    v.lower_bound = std::max(v.lower_bound, rounded);
-                    v.upper_bound = std::min(v.upper_bound, rounded);
+        DualRevisedSimplex heur_solver;
+        DualRevisedSimplexResult heur_res = heur_solver.solve(all_one_model);
+        if (heur_res.status == DualRevisedSimplexStatus::OPTIMAL) {
+            IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(
+                model, heur_res.primal_solution, config_.integrality_tolerance
+            );
+            if (heur_ver.is_integer_feasible) {
+                real_t calc_obj = model.obj_offset();
+                for (size_t j = 0; j < num_vars; ++j) {
+                    calc_obj += vars[j].obj_coeff * heur_res.primal_solution[j];
                 }
-
-                DualRevisedSimplex heur_solver;
-                DualRevisedSimplexResult heur_res = heur_solver.solve(fixed_model);
-                if (heur_res.status == DualRevisedSimplexStatus::OPTIMAL) {
-                    IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(
-                        model, heur_res.primal_solution, config_.integrality_tolerance
-                    );
-                    if (heur_ver.is_integer_feasible) {
-                        real_t calc_obj = model.obj_offset();
-                        for (size_t j = 0; j < num_vars; ++j) {
-                            calc_obj += vars[j].obj_coeff * heur_res.primal_solution[j];
-                        }
-                        if (!result.incumbent.has_incumbent || calc_obj < result.incumbent.objective_value) {
-                            result.incumbent.has_incumbent = true;
-                            result.incumbent.objective_value = calc_obj;
-                            result.incumbent.solution = heur_res.primal_solution;
-                            result.incumbent.originating_node_id = 0;
-                            result.incumbent.verification = heur_ver;
-                            result.telemetry.incumbent_updates++;
-                            result.telemetry.final_incumbent_obj = calc_obj;
-                        }
-                    }
+                if (!result.incumbent.has_incumbent || calc_obj < result.incumbent.objective_value) {
+                    result.incumbent.has_incumbent = true;
+                    result.incumbent.objective_value = calc_obj;
+                    result.incumbent.solution = heur_res.primal_solution;
+                    result.incumbent.originating_node_id = 0;
+                    result.incumbent.verification = heur_ver;
+                    result.telemetry.incumbent_updates++;
+                    result.telemetry.final_incumbent_obj = calc_obj;
                 }
-                if (result.incumbent.has_incumbent) break;
             }
         }
     }
