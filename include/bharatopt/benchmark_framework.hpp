@@ -31,7 +31,8 @@ enum class BenchmarkSolverType {
     DUAL_REVISED_SIMPLEX,
     CPU_FIRST_ORDER,
     GPU_FIRST_ORDER,
-    EDUCATIONAL_SIMPLEX
+    EDUCATIONAL_SIMPLEX,
+    BRANCH_AND_BOUND
 };
 
 struct BenchmarkInstanceConfig {

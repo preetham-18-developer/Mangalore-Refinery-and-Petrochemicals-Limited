@@ -3,6 +3,8 @@
 #include <bharatopt/revised_simplex.hpp>
 #include <bharatopt/dual_revised_simplex.hpp>
 #include <bharatopt/first_order_solver.hpp>
+#include <bharatopt/milp_foundation.hpp>
+#include <bharatopt/branch_and_bound.hpp>
 #include <cmath>
 #include <algorithm>
 #include <fstream>
@@ -103,23 +105,15 @@ RoutingDecision ExecutionRouter::decide(
     dec.confidence_status = (dec.extrapolation_status == ExtrapolationStatus::IN_DOMAIN) ?
                              ConfidenceLevel::HIGH_DATA_SUPPORT : ConfidenceLevel::EXTRAPOLATION_WARNING;
 
-    // Check Solver Compatibility (Non-continuous variables check)
-    bool has_non_continuous = false;
-    for (size_t j = 0; j < model.num_variables(); ++j) {
-        const auto& var = model.get_variable(static_cast<index_t>(j));
-        if (var.type != VariableType::CONTINUOUS) {
-            has_non_continuous = true;
-            break;
-        }
-    }
-
-    if (has_non_continuous) {
-        dec.selected_solver = BenchmarkSolverType::DUAL_REVISED_SIMPLEX;
-        dec.solver_name = "DualRevisedSimplex";
-        dec.solver_variant = "CPU_Dual_Simplex";
+    // Check Solver Compatibility (MILP Classification via MilpFoundation)
+    ModelType model_type = MilpFoundation::classify_model(model);
+    if (model_type == ModelType::MILP) {
+        dec.selected_solver = BenchmarkSolverType::BRANCH_AND_BOUND;
+        dec.solver_name = "BranchAndBound";
+        dec.solver_variant = "MILP_BranchAndBound";
         dec.execution_device = "CPU";
         dec.selected_predicted_cost_ms = cpu_dual_cost;
-        dec.routing_reason = "UNSUPPORTED_MODEL: Model contains integer/binary variables. Routing to continuous CPU LP path.";
+        dec.routing_reason = "MILP_MODEL: Model contains integer/binary variables. Routing to CPU Branch-and-Bound solver.";
         auto d_end = std::chrono::high_resolution_clock::now();
         dec.decision_time_ms = std::chrono::duration<double, std::milli>(d_end - d_start).count();
         return dec;
@@ -242,6 +236,24 @@ RoutedSolveResult ExecutionRouter::solve(const LPModel& model) {
         result.dual_solution = res.dual_solution;
         result.iterations = res.stats.iterations;
         primary_success = (res.status == FirstOrderSolverStatus::OPTIMAL);
+
+    } else if (result.decision.selected_solver == BenchmarkSolverType::BRANCH_AND_BOUND) {
+        BranchAndBoundEngine bnb_engine;
+        BnBResult res = bnb_engine.solve(model);
+        if (res.status == BnBSolverStatus::OPTIMAL) {
+            result.status = "OPTIMAL";
+        } else if (res.status == BnBSolverStatus::INFEASIBLE) {
+            result.status = "INFEASIBLE";
+        } else if (res.status == BnBSolverStatus::LIMIT_REACHED) {
+            result.status = "LIMIT_REACHED";
+        } else {
+            result.status = "NUMERICAL_FAILURE";
+        }
+        result.objective_value = res.objective_value;
+        result.primal_solution = res.solution;
+        result.iterations = res.telemetry.nodes_processed;
+        result.bnb_telemetry = res.telemetry;
+        primary_success = (res.status == BnBSolverStatus::OPTIMAL);
     }
 
     auto s_end = std::chrono::high_resolution_clock::now();
@@ -249,8 +261,14 @@ RoutedSolveResult ExecutionRouter::solve(const LPModel& model) {
 
     // 4. Independent Solution Verification
     if (primary_success && !result.primal_solution.empty()) {
-        RevisedSimplex verifier;
-        result.verification_passed = verifier.verify_solution_feasibility(model, result.primal_solution);
+        if (result.decision.selected_solver == BenchmarkSolverType::BRANCH_AND_BOUND) {
+            auto ver_res = MilpFoundation::verify_integer_feasibility(model, result.primal_solution);
+            result.verification_passed = ver_res.is_integer_feasible && ver_res.constraint_feasibility_passed && ver_res.bounds_passed;
+            result.max_residual = std::max(ver_res.max_integrality_violation, std::max(ver_res.max_bound_violation, ver_res.max_constraint_residual));
+        } else {
+            RevisedSimplex verifier;
+            result.verification_passed = verifier.verify_solution_feasibility(model, result.primal_solution);
+        }
     } else {
         result.verification_passed = false;
     }

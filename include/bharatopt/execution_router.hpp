@@ -74,6 +74,8 @@ struct RoutedSolveResult {
     std::string fallback_reason;
     std::string fallback_solver_name;
     double fallback_solve_time_ms{0.0};
+
+    BnBTelemetry bnb_telemetry;
 };
 
 /**

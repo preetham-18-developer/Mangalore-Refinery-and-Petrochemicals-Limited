@@ -465,19 +465,37 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
         if (it_rng != range_map.end()) {
             csense = ConstraintSense::RANGED;
             real_t rval = it_rng->second;
-            if (rdef.type == 'E') {
-                if (rval > 0) {
-                    range_up = rhs_val + rval;
+            real_t lower_bound = rhs_val;
+            real_t upper_bound = rhs_val;
+
+            if (rdef.type == 'L') {
+                if (rval > 0.0) {
+                    lower_bound = rhs_val - rval;
+                    upper_bound = rhs_val;
                 } else {
-                    range_up = rhs_val;
-                    rhs_val = rhs_val + rval;
+                    lower_bound = rhs_val;
+                    upper_bound = rhs_val - rval;
                 }
-            } else if (rdef.type == 'L') {
-                range_up = rhs_val;
-                rhs_val = rhs_val - std::abs(rval);
             } else if (rdef.type == 'G') {
-                range_up = rhs_val + std::abs(rval);
+                if (rval > 0.0) {
+                    lower_bound = rhs_val;
+                    upper_bound = rhs_val + rval;
+                } else {
+                    lower_bound = rhs_val + rval;
+                    upper_bound = rhs_val;
+                }
+            } else if (rdef.type == 'E') {
+                if (rval > 0.0) {
+                    lower_bound = rhs_val;
+                    upper_bound = rhs_val + rval;
+                } else {
+                    lower_bound = rhs_val + rval;
+                    upper_bound = rhs_val;
+                }
             }
+
+            rhs_val = lower_bound;
+            range_up = upper_bound;
         }
 
         index_t cidx = model.add_constraint(rname, csense, rhs_val, range_up);

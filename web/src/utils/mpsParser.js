@@ -17,6 +17,7 @@ export function parseMPS(text, fileName = 'model.mps') {
   const rows = []; // { name, type }
   const colsMap = new Map(); // colName -> { name, cost: 0, coeffs: Map(rowName -> val), isInteger: false }
   const rhsMap = new Map(); // rowName -> val
+  const rangeMap = new Map(); // rowName -> val
   const boundsMap = new Map(); // colName -> { lb: 0, ub: Infinity, isInteger: false, isBinary: false }
 
   let inIntegerBlock = false;
@@ -134,6 +135,20 @@ export function parseMPS(text, fileName = 'model.mps') {
           rhsMap.set(rName, val);
         }
       }
+    } else if (section === 'RANGES') {
+      let idx = 0;
+      const maybeRow = rows.find(r => r.name === tokens[0]);
+      if (!maybeRow && tokens.length > 1) {
+        idx = 1;
+      }
+      for (; idx < tokens.length; idx += 2) {
+        if (idx + 1 >= tokens.length) break;
+        const rName = tokens[idx];
+        const val = parseFloat(tokens[idx + 1]);
+        if (!isNaN(val)) {
+          rangeMap.set(rName, val);
+        }
+      }
     } else if (section === 'BOUNDS') {
       const bndType = tokens[0].toUpperCase();
       let colName = tokens[1];
@@ -228,6 +243,7 @@ export function parseMPS(text, fileName = 'model.mps') {
     constraintRows,
     colsMap,
     rhsMap,
+    rangeMap,
     boundsMap,
     integerCount,
     binaryCount
@@ -269,7 +285,7 @@ export function solveMPSModel(parsedModel) {
   // Adaptive Router Strategy Selection
   let solver = 'Dual Revised Simplex (CPU)';
   if (type === 'MILP') {
-    solver = 'Branch & Bound Engine (CPU)';
+    solver = 'BranchAndBound (CPU)';
   } else if (colsCount >= 5000 || nnzCount >= 50000) {
     solver = 'FirstOrderSolver (GPU)';
   } else {
@@ -280,33 +296,6 @@ export function solveMPSModel(parsedModel) {
   let objectiveValue = 0;
   let status = 'OPTIMAL';
   let iterations = 10;
-
-  if (name.toLowerCase().includes('refinery_demo') || (rowsCount === 6 && colsCount === 5 && nnzCount === 12)) {
-    objectiveValue = -4750096.67;
-    iterations = 5;
-  } else if (name.toLowerCase().includes('share2b') && (rowsCount === 96 || (rowsCount === 4 && colsCount === 2))) {
-    if (rowsCount === 96) {
-      objectiveValue = -415.73224074;
-      iterations = 27;
-    } else {
-      objectiveValue = -415.73224074;
-      iterations = 12;
-    }
-  } else if (name.toLowerCase().includes('afiro')) {
-    if (rowsCount === 5 && colsCount === 5) {
-      objectiveValue = -152.00;
-      iterations = 0;
-    } else {
-      objectiveValue = -464.75314286;
-      iterations = 10;
-    }
-  } else if (name.toLowerCase().includes('p0033')) {
-    objectiveValue = 3089.00;
-    iterations = 14;
-  } else if (name.toLowerCase().includes('blend2')) {
-    objectiveValue = 7.50;
-    iterations = 8;
-  } else {
   // General solver evaluation for arbitrary uploaded MPS models:
   // 1. Solve LP/MILP model taking into account column bounds, row constraints, and objective sense
   let solvedX = new Map();
@@ -401,18 +390,59 @@ export function solveMPSModel(parsedModel) {
     const rhs = parsedModel.rhsMap.get(r.name) ?? 0;
     let viol = 0;
 
-    if (r.type === 'L' && activity > rhs + 1e-6) {
-      viol = activity - rhs;
-      isVerified = false;
-      if (!failedReason) failedReason = `Row ${r.name} <= ${rhs} violated (activity=${activity})`;
-    } else if (r.type === 'G' && activity < rhs - 1e-6) {
-      viol = rhs - activity;
-      isVerified = false;
-      if (!failedReason) failedReason = `Row ${r.name} >= ${rhs} violated (activity=${activity})`;
-    } else if (r.type === 'E' && Math.abs(activity - rhs) > 1e-6) {
-      viol = Math.abs(activity - rhs);
-      isVerified = false;
-      if (!failedReason) failedReason = `Row ${r.name} = ${rhs} violated (activity=${activity})`;
+    if (parsedModel.rangeMap && parsedModel.rangeMap.has(r.name)) {
+      const rval = parsedModel.rangeMap.get(r.name);
+      let lowerBound = rhs;
+      let upperBound = rhs;
+      if (r.type === 'L') {
+        if (rval > 0) {
+          lowerBound = rhs - rval;
+          upperBound = rhs;
+        } else {
+          lowerBound = rhs;
+          upperBound = rhs - rval;
+        }
+      } else if (r.type === 'G') {
+        if (rval > 0) {
+          lowerBound = rhs;
+          upperBound = rhs + rval;
+        } else {
+          lowerBound = rhs + rval;
+          upperBound = rhs;
+        }
+      } else if (r.type === 'E') {
+        if (rval > 0) {
+          lowerBound = rhs;
+          upperBound = rhs + rval;
+        } else {
+          lowerBound = rhs + rval;
+          upperBound = rhs;
+        }
+      }
+
+      if (activity < lowerBound - 1e-6) {
+        viol = lowerBound - activity;
+        isVerified = false;
+        if (!failedReason) failedReason = `Row ${r.name} ranged [${lowerBound}, ${upperBound}] violated (activity=${activity})`;
+      } else if (activity > upperBound + 1e-6) {
+        viol = activity - upperBound;
+        isVerified = false;
+        if (!failedReason) failedReason = `Row ${r.name} ranged [${lowerBound}, ${upperBound}] violated (activity=${activity})`;
+      }
+    } else {
+      if (r.type === 'L' && activity > rhs + 1e-6) {
+        viol = activity - rhs;
+        isVerified = false;
+        if (!failedReason) failedReason = `Row ${r.name} <= ${rhs} violated (activity=${activity})`;
+      } else if (r.type === 'G' && activity < rhs - 1e-6) {
+        viol = rhs - activity;
+        isVerified = false;
+        if (!failedReason) failedReason = `Row ${r.name} >= ${rhs} violated (activity=${activity})`;
+      } else if (r.type === 'E' && Math.abs(activity - rhs) > 1e-6) {
+        viol = Math.abs(activity - rhs);
+        isVerified = false;
+        if (!failedReason) failedReason = `Row ${r.name} = ${rhs} violated (activity=${activity})`;
+      }
     }
     maxConstraintViol = Math.max(maxConstraintViol, viol);
   });

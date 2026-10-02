@@ -103,7 +103,7 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
         density: cppResult?.density || parsed.density,
         objectiveSense: cppResult?.objectiveSense || parsed.objectiveSense,
         expectedObj: cppResult?.objective ?? solveMPSModel(parsed).expectedObj,
-        solver: cppResult?.autoSelectedEngine || 'Dual Revised Simplex (CPU)',
+        solver: cppResult?.autoSelectedEngine || (parsed.type === 'MILP' ? 'BranchAndBound (CPU)' : 'Dual Revised Simplex (CPU)'),
         presolveStats: cppResult?.presolveStats || { rowsElim: 0, colsElim: 0, timeMs: 0 },
         solveTimeMs: cppResult?.solveTimeMs ?? 0.45,
         totalTimeMs: cppResult?.totalTimeMs ?? 1.89,
