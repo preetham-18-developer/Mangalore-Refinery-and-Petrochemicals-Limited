@@ -348,6 +348,7 @@ InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
 
         // Individual variable lower bounds (updated by singleton rows)
         std::unordered_map<index_t, real_t> eff_var_lb;
+        std::unordered_map<index_t, std::string> eff_var_lb_source;
         for (const auto& kv : target_coeffs) {
             index_t v_idx = kv.first;
             real_t lb = vars[static_cast<size_t>(v_idx)].lower_bound;
@@ -407,6 +408,7 @@ InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
                 index_t sv = *sub_vars.begin();
                 if (contribution > eff_var_lb[sv]) {
                     eff_var_lb[sv] = contribution;
+                    eff_var_lb_source[sv] = sub_cons.name;
                 }
             } else {
                 // Group constraint
@@ -443,12 +445,33 @@ InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
             real_t c_j = kv.second;
             if (covered_vars.count(v_idx) == 0) {
                 total_indiv_min += c_j * eff_var_lb[v_idx];
+                if (eff_var_lb_source.count(v_idx) > 0) {
+                    contributor_rows.push_back(eff_var_lb_source[v_idx]);
+                }
             }
         }
 
-        real_t total_forced_min = total_group_min + total_indiv_min;
+        // Calculate negative terms contribution for target constraint
+        real_t neg_contribution = 0.0;
+        bool neg_unbounded = false;
 
-        if (total_forced_min > target_rb.req_upper + 1e-9 && !contributor_rows.empty()) {
+        for (const auto& term : target_cons.terms) {
+            if (term.first >= 0 && static_cast<size_t>(term.first) < vars.size() && term.second < 0.0) {
+                const auto& v = vars[static_cast<size_t>(term.first)];
+                if (std::isinf(v.upper_bound) || v.upper_bound >= BHARATOPT_INFINITY / 2.0) {
+                    neg_unbounded = true;
+                    break;
+                } else {
+                    neg_contribution += term.second * v.upper_bound;
+                }
+            }
+        }
+
+        if (neg_unbounded) continue;
+
+        real_t total_forced_min = total_group_min + total_indiv_min + neg_contribution;
+
+        if (total_forced_min > target_rb.req_upper + 1e-9) {
             diag.is_infeasible = true;
             diag.summary = "Multi-row interval overlap contradiction";
             contributor_rows.push_back(target_cons.name);

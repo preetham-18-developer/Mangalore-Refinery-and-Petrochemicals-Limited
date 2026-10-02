@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <sstream>
+#include <iostream>
 #include <algorithm>
 
 namespace bharatopt {
@@ -16,6 +17,12 @@ void Postsolve::initialize(const LPModel& orig_model) {
     fixed_values_.assign(orig_num_vars_, 0.0);
     is_fixed_.assign(orig_num_vars_, false);
     orig_to_reduced_var_.assign(orig_num_vars_, -1);
+    tightened_lb_.resize(orig_num_vars_);
+    tightened_ub_.resize(orig_num_vars_);
+    for (size_t i = 0; i < orig_num_vars_; ++i) {
+        tightened_lb_[i] = orig_model.get_variable(static_cast<index_t>(i)).lower_bound;
+        tightened_ub_[i] = orig_model.get_variable(static_cast<index_t>(i)).upper_bound;
+    }
 }
 
 void Postsolve::record_fixed_var(index_t orig_var_idx, real_t val) {
@@ -33,6 +40,14 @@ void Postsolve::record_var_map(index_t orig_var_idx, index_t reduced_var_idx) {
     }
 }
 
+void Postsolve::record_tightened_bounds(index_t orig_var_idx, real_t lb, real_t ub) {
+    if (orig_var_idx >= 0 && static_cast<size_t>(orig_var_idx) < orig_num_vars_) {
+        size_t idx = static_cast<size_t>(orig_var_idx);
+        tightened_lb_[idx] = lb;
+        tightened_ub_[idx] = ub;
+    }
+}
+
 std::vector<real_t> Postsolve::recover_solution(const std::vector<real_t>& reduced_x) const {
     std::vector<real_t> orig_x(orig_num_vars_, 0.0);
     for (size_t i = 0; i < orig_num_vars_; ++i) {
@@ -43,14 +58,18 @@ std::vector<real_t> Postsolve::recover_solution(const std::vector<real_t>& reduc
             if (red_idx >= 0 && static_cast<size_t>(red_idx) < reduced_x.size()) {
                 orig_x[i] = reduced_x[static_cast<size_t>(red_idx)];
             } else {
-                // If unmapped, fallback to lower bound or 0.0
                 const auto& var = orig_model_copy_.get_variable(static_cast<index_t>(i));
-                if (!std::isinf(var.lower_bound)) {
-                    orig_x[i] = var.lower_bound;
-                } else if (!std::isinf(var.upper_bound)) {
-                    orig_x[i] = var.upper_bound;
+                real_t t_lb = (i < tightened_lb_.size()) ? tightened_lb_[i] : var.lower_bound;
+                real_t t_ub = (i < tightened_ub_.size()) ? tightened_ub_[i] : var.upper_bound;
+                real_t c = (orig_model_copy_.sense() == ObjectiveSense::MINIMIZE) ? var.obj_coeff : -var.obj_coeff;
+                if (c > 0.0) {
+                    orig_x[i] = !std::isinf(t_lb) ? t_lb : (!std::isinf(t_ub) ? t_ub : 0.0);
+                } else if (c < 0.0) {
+                    orig_x[i] = !std::isinf(t_ub) ? t_ub : (!std::isinf(t_lb) ? t_lb : 0.0);
                 } else {
-                    orig_x[i] = 0.0;
+                    if (!std::isinf(t_lb)) orig_x[i] = t_lb;
+                    else if (!std::isinf(t_ub)) orig_x[i] = t_ub;
+                    else orig_x[i] = 0.0;
                 }
             }
         }
@@ -135,7 +154,7 @@ std::string PresolveResult::to_string() const {
 // PresolveEngine Implementation
 // ============================================================================
 
-PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
+PresolveResult PresolveEngine::presolve(const LPModel& orig_model, const PresolveOptions& options) const {
     auto start_time = std::chrono::high_resolution_clock::now();
     auto is_infinite_bound = [](real_t val) { return std::isinf(val) || std::abs(val) >= 1e19; };
 
@@ -166,197 +185,78 @@ PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
         pass_count++;
 
         // Pass A: Fixed Variable Elimination
-        for (size_t j = 0; j < num_vars; ++j) {
-            if (!active_vars[j]) continue;
+        if (options.enable_fixed_variable) {
+            for (size_t j = 0; j < num_vars; ++j) {
+                if (!active_vars[j]) continue;
 
-            real_t lb = work_vars[j].lower_bound;
-            real_t ub = work_vars[j].upper_bound;
+                real_t lb = work_vars[j].lower_bound;
+                real_t ub = work_vars[j].upper_bound;
 
-            if (lb > ub + 1e-12) {
-                result.status = PresolveStatus::INFEASIBLE;
-                auto end_time = std::chrono::high_resolution_clock::now();
-                result.stats.presolve_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-                return result;
-            }
-
-            if (std::abs(lb - ub) <= 1e-12) {
-                real_t fix_val = lb;
-                active_vars[j] = false;
-                fixed_vals[j] = fix_val;
-                result.postsolve.record_fixed_var(static_cast<index_t>(j), fix_val);
-
-                // Update objective offset
-                work_obj_offset += work_vars[j].obj_coeff * fix_val;
-
-                // Substitute into constraints
-                for (size_t i = 0; i < num_cons; ++i) {
-                    if (!active_cons[i]) continue;
-                    auto& terms = work_cons[i].terms;
-                    for (auto it = terms.begin(); it != terms.end(); ) {
-                        if (static_cast<size_t>(it->first) == j) {
-                            work_cons[i].rhs -= it->second * fix_val;
-                            if (work_cons[i].sense == ConstraintSense::RANGED) {
-                                work_cons[i].range_upper -= it->second * fix_val;
-                            }
-                            it = terms.erase(it);
-                        } else {
-                            ++it;
-                        }
-                    }
-                }
-
-                changed = true;
-                result.stats.transformations.push_back({
-                    ReductionType::FIXED_VARIABLE,
-                    "Fixed variable " + work_vars[j].name + " at value " + std::to_string(fix_val),
-                    work_vars[j].name, static_cast<index_t>(j), -1, fix_val
-                });
-            }
-        }
-
-        // Pass B: Empty Row Detection & Infeasibility
-        for (size_t i = 0; i < num_cons; ++i) {
-            if (!active_cons[i]) continue;
-
-            // Filter inactive terms
-            auto& terms = work_cons[i].terms;
-            terms.erase(std::remove_if(terms.begin(), terms.end(), [&](const std::pair<index_t, real_t>& t) {
-                return !active_vars[static_cast<size_t>(t.first)] || t.second == 0.0;
-            }), terms.end());
-
-            if (terms.empty()) {
-                real_t rhs = work_cons[i].rhs;
-                ConstraintSense csense = work_cons[i].sense;
-
-                bool infeasible = false;
-                if (csense == ConstraintSense::LESS_EQUAL && rhs < -1e-12) infeasible = true;
-                if (csense == ConstraintSense::GREATER_EQUAL && rhs > 1e-12) infeasible = true;
-                if (csense == ConstraintSense::EQUAL && std::abs(rhs) > 1e-12) infeasible = true;
-                if (csense == ConstraintSense::RANGED && (rhs > 1e-12 || work_cons[i].range_upper < -1e-12)) infeasible = true;
-
-                if (infeasible) {
+                if (lb > ub + 1e-12) {
                     result.status = PresolveStatus::INFEASIBLE;
                     auto end_time = std::chrono::high_resolution_clock::now();
                     result.stats.presolve_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
                     return result;
                 }
 
-                active_cons[i] = false;
-                changed = true;
-                result.stats.transformations.push_back({
-                    ReductionType::EMPTY_ROW_REDUNDANT,
-                    "Removed empty redundant constraint " + work_cons[i].name,
-                    work_cons[i].name, -1, static_cast<index_t>(i), 0.0
-                });
-            }
-        }
-
-        // Pass C: Empty Column Processing
-        std::vector<size_t> col_counts(num_vars, 0);
-        for (size_t i = 0; i < num_cons; ++i) {
-            if (!active_cons[i]) continue;
-            for (const auto& term : work_cons[i].terms) {
-                if (active_vars[static_cast<size_t>(term.first)]) {
-                    col_counts[static_cast<size_t>(term.first)]++;
-                }
-            }
-        }
-
-        for (size_t j = 0; j < num_vars; ++j) {
-            if (!active_vars[j]) continue;
-            if (col_counts[j] == 0) {
-                real_t cj = work_vars[j].obj_coeff;
-                real_t lb = work_vars[j].lower_bound;
-                real_t ub = work_vars[j].upper_bound;
-
-                real_t fix_val = 0.0;
-                bool fix_var = false;
-
-                if (cj == 0.0) {
-                    fix_val = !is_infinite_bound(lb) ? lb : (!is_infinite_bound(ub) ? ub : 0.0);
-                    fix_var = true;
-                } else if (sense == ObjectiveSense::MINIMIZE) {
-                    if (cj > 0.0) {
-                        if (!is_infinite_bound(lb)) { fix_val = lb; fix_var = true; }
-                        else { result.status = PresolveStatus::UNBOUNDED; }
-                    } else {
-                        if (!is_infinite_bound(ub)) { fix_val = ub; fix_var = true; }
-                        else { result.status = PresolveStatus::UNBOUNDED; }
-                    }
-                } else { // MAXIMIZE
-                    if (cj > 0.0) {
-                        if (!is_infinite_bound(ub)) { fix_val = ub; fix_var = true; }
-                        else { result.status = PresolveStatus::UNBOUNDED; }
-                    } else {
-                        if (!is_infinite_bound(lb)) { fix_val = lb; fix_var = true; }
-                        else { result.status = PresolveStatus::UNBOUNDED; }
-                    }
-                }
-
-                if (result.status == PresolveStatus::UNBOUNDED) {
-                    auto end_time = std::chrono::high_resolution_clock::now();
-                    result.stats.presolve_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
-                    return result;
-                }
-
-                if (fix_var) {
+                if (std::abs(lb - ub) <= 1e-12) {
+                    real_t fix_val = lb;
                     active_vars[j] = false;
                     fixed_vals[j] = fix_val;
                     result.postsolve.record_fixed_var(static_cast<index_t>(j), fix_val);
-                    work_obj_offset += cj * fix_val;
+
+                    // Update objective offset
+                    work_obj_offset += work_vars[j].obj_coeff * fix_val;
+
+                    // Substitute into constraints
+                    for (size_t i = 0; i < num_cons; ++i) {
+                        if (!active_cons[i]) continue;
+                        auto& terms = work_cons[i].terms;
+                        for (auto it = terms.begin(); it != terms.end(); ) {
+                            if (static_cast<size_t>(it->first) == j) {
+                                work_cons[i].rhs -= it->second * fix_val;
+                                if (work_cons[i].sense == ConstraintSense::RANGED) {
+                                    work_cons[i].range_upper -= it->second * fix_val;
+                                }
+                                it = terms.erase(it);
+                            } else {
+                                ++it;
+                            }
+                        }
+                    }
+
                     changed = true;
                     result.stats.transformations.push_back({
-                        ReductionType::EMPTY_COL_FIXED,
-                        "Fixed empty column " + work_vars[j].name + " at value " + std::to_string(fix_val),
+                        ReductionType::FIXED_VARIABLE,
+                        "Fixed variable " + work_vars[j].name + " at value " + std::to_string(fix_val),
                         work_vars[j].name, static_cast<index_t>(j), -1, fix_val
                     });
                 }
             }
         }
 
-        // Pass D: Singleton Row Processing & Bound Tightening
-        for (size_t i = 0; i < num_cons; ++i) {
-            if (!active_cons[i]) continue;
-            const auto& terms = work_cons[i].terms;
-            if (terms.size() == 1) {
-                index_t var_idx = terms[0].first;
-                size_t j = static_cast<size_t>(var_idx);
-                if (!active_vars[j]) continue;
+        // Pass B: Empty Row Detection & Infeasibility
+        if (options.enable_empty_row) {
+            for (size_t i = 0; i < num_cons; ++i) {
+                if (!active_cons[i]) continue;
 
-                real_t a = terms[0].second;
-                real_t b = work_cons[i].rhs;
-                ConstraintSense csense = work_cons[i].sense;
+                // Filter inactive terms
+                auto& terms = work_cons[i].terms;
+                terms.erase(std::remove_if(terms.begin(), terms.end(), [&](const std::pair<index_t, real_t>& t) {
+                    return !active_vars[static_cast<size_t>(t.first)] || t.second == 0.0;
+                }), terms.end());
 
-                if (a != 0.0) {
-                    real_t val = b / a;
-                    real_t new_lb = -BHARATOPT_INFINITY;
-                    real_t new_ub = BHARATOPT_INFINITY;
+                if (terms.empty()) {
+                    real_t rhs = work_cons[i].rhs;
+                    ConstraintSense csense = work_cons[i].sense;
 
-                    if (csense == ConstraintSense::LESS_EQUAL) {
-                        if (a > 0.0) new_ub = val;
-                        else new_lb = val;
-                    } else if (csense == ConstraintSense::GREATER_EQUAL) {
-                        if (a > 0.0) new_lb = val;
-                        else new_ub = val;
-                    } else if (csense == ConstraintSense::EQUAL) {
-                        new_lb = val;
-                        new_ub = val;
-                    } else if (csense == ConstraintSense::RANGED) {
-                        real_t u_val = work_cons[i].range_upper / a;
-                        if (a > 0.0) {
-                            new_lb = val;
-                            new_ub = u_val;
-                        } else {
-                            new_lb = u_val;
-                            new_ub = val;
-                        }
-                    }
+                    bool infeasible = false;
+                    if (csense == ConstraintSense::LESS_EQUAL && rhs < -1e-12) infeasible = true;
+                    if (csense == ConstraintSense::GREATER_EQUAL && rhs > 1e-12) infeasible = true;
+                    if (csense == ConstraintSense::EQUAL && std::abs(rhs) > 1e-12) infeasible = true;
+                    if (csense == ConstraintSense::RANGED && (rhs > 1e-12 || work_cons[i].range_upper < -1e-12)) infeasible = true;
 
-                    // Tighten bounds
-                    if (new_lb > work_vars[j].lower_bound) work_vars[j].lower_bound = new_lb;
-                    if (new_ub < work_vars[j].upper_bound) work_vars[j].upper_bound = new_ub;
-
-                    if (work_vars[j].lower_bound > work_vars[j].upper_bound + 1e-12) {
+                    if (infeasible) {
                         result.status = PresolveStatus::INFEASIBLE;
                         auto end_time = std::chrono::high_resolution_clock::now();
                         result.stats.presolve_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
@@ -366,59 +266,189 @@ PresolveResult PresolveEngine::presolve(const LPModel& orig_model) const {
                     active_cons[i] = false;
                     changed = true;
                     result.stats.transformations.push_back({
-                        ReductionType::SINGLETON_ROW,
-                        "Singleton row " + work_cons[i].name + " tightened variable " + work_vars[j].name,
-                        work_vars[j].name, static_cast<index_t>(j), static_cast<index_t>(i), val
+                        ReductionType::EMPTY_ROW_REDUNDANT,
+                        "Removed empty redundant constraint " + work_cons[i].name,
+                        work_cons[i].name, -1, static_cast<index_t>(i), 0.0
                     });
                 }
             }
         }
 
-        // Pass E: Big-M Coefficient Tightening
-        for (size_t i = 0; i < num_cons; ++i) {
-            if (!active_cons[i]) continue;
-            auto& terms = work_cons[i].terms;
-            if (work_cons[i].sense != ConstraintSense::LESS_EQUAL) continue;
+        // Pass C: Empty Column Processing
+        if (options.enable_empty_col) {
+            std::vector<size_t> col_counts(num_vars, 0);
+            for (size_t i = 0; i < num_cons; ++i) {
+                if (!active_cons[i]) continue;
+                for (const auto& term : work_cons[i].terms) {
+                    if (active_vars[static_cast<size_t>(term.first)]) {
+                        col_counts[static_cast<size_t>(term.first)]++;
+                    }
+                }
+            }
 
-            for (auto& term : terms) {
-                index_t v_idx = term.first;
-                size_t j = static_cast<size_t>(v_idx);
+            for (size_t j = 0; j < num_vars; ++j) {
                 if (!active_vars[j]) continue;
+                if (col_counts[j] == 0) {
+                    real_t cj = work_vars[j].obj_coeff;
+                    real_t lb = work_vars[j].lower_bound;
+                    real_t ub = work_vars[j].upper_bound;
 
-                if (work_vars[j].type == VariableType::BINARY && term.second < -1e-5) {
-                    real_t cur_coeff = term.second;
+                    real_t fix_val = 0.0;
+                    bool fix_var = false;
 
-                    real_t max_pos_sum = 0.0;
-                    bool can_bound = true;
-
-                    for (const auto& o_term : terms) {
-                        if (o_term.first == v_idx) continue;
-                        size_t oj = static_cast<size_t>(o_term.first);
-                        if (!active_vars[oj]) continue;
-
-                        if (o_term.second > 0.0) {
-                            if (std::isinf(work_vars[oj].upper_bound)) {
-                                can_bound = false;
-                                break;
-                            }
-                            max_pos_sum += o_term.second * work_vars[oj].upper_bound;
-                        } else if (o_term.second < 0.0) {
-                            if (!std::isinf(work_vars[oj].lower_bound)) {
-                                max_pos_sum += o_term.second * work_vars[oj].lower_bound;
-                            }
+                    if (cj == 0.0) {
+                        fix_val = !is_infinite_bound(lb) ? lb : (!is_infinite_bound(ub) ? ub : 0.0);
+                        fix_var = true;
+                    } else if (sense == ObjectiveSense::MINIMIZE) {
+                        if (cj > 0.0) {
+                            if (!is_infinite_bound(lb)) { fix_val = lb; fix_var = true; }
+                            else { result.status = PresolveStatus::UNBOUNDED; }
+                        } else {
+                            if (!is_infinite_bound(ub)) { fix_val = ub; fix_var = true; }
+                            else { result.status = PresolveStatus::UNBOUNDED; }
+                        }
+                    } else { // MAXIMIZE
+                        if (cj > 0.0) {
+                            if (!is_infinite_bound(ub)) { fix_val = ub; fix_var = true; }
+                            else { result.status = PresolveStatus::UNBOUNDED; }
+                        } else {
+                            if (!is_infinite_bound(lb)) { fix_val = lb; fix_var = true; }
+                            else { result.status = PresolveStatus::UNBOUNDED; }
                         }
                     }
 
-                    if (can_bound && max_pos_sum > 0.0) {
-                        real_t required_m = max_pos_sum - work_cons[i].rhs;
-                        if (required_m > 0.0 && -cur_coeff > required_m + 1e-4) {
-                            term.second = -required_m;
-                            changed = true;
-                            result.stats.transformations.push_back({
-                                ReductionType::BOUND_TIGHTENING,
-                                "Tightened Big-M coefficient on " + work_cons[i].name + " for " + work_vars[j].name + " from " + std::to_string(cur_coeff) + " to -" + std::to_string(required_m),
-                                work_vars[j].name, static_cast<index_t>(j), static_cast<index_t>(i), -required_m
-                            });
+                    if (result.status == PresolveStatus::UNBOUNDED) {
+                        auto end_time = std::chrono::high_resolution_clock::now();
+                        result.stats.presolve_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+                        return result;
+                    }
+
+                    if (fix_var) {
+                        active_vars[j] = false;
+                        fixed_vals[j] = fix_val;
+                        result.postsolve.record_fixed_var(static_cast<index_t>(j), fix_val);
+                        work_obj_offset += cj * fix_val;
+                        changed = true;
+                        result.stats.transformations.push_back({
+                            ReductionType::EMPTY_COL_FIXED,
+                            "Fixed empty column " + work_vars[j].name + " at value " + std::to_string(fix_val),
+                            work_vars[j].name, static_cast<index_t>(j), -1, fix_val
+                        });
+                    }
+                }
+            }
+        }
+
+        // Pass D: Singleton Row Processing & Bound Tightening
+        if (options.enable_singleton_row) {
+            for (size_t i = 0; i < num_cons; ++i) {
+                if (!active_cons[i]) continue;
+                const auto& terms = work_cons[i].terms;
+                if (terms.size() == 1) {
+                    index_t var_idx = terms[0].first;
+                    size_t j = static_cast<size_t>(var_idx);
+                    if (!active_vars[j]) continue;
+
+                    real_t a = terms[0].second;
+                    real_t b = work_cons[i].rhs;
+                    ConstraintSense csense = work_cons[i].sense;
+
+                    if (a != 0.0) {
+                        real_t val = b / a;
+                        real_t new_lb = -BHARATOPT_INFINITY;
+                        real_t new_ub = BHARATOPT_INFINITY;
+
+                        if (csense == ConstraintSense::LESS_EQUAL) {
+                            if (a > 0.0) new_ub = val;
+                            else new_lb = val;
+                        } else if (csense == ConstraintSense::GREATER_EQUAL) {
+                            if (a > 0.0) new_lb = val;
+                            else new_ub = val;
+                        } else if (csense == ConstraintSense::EQUAL) {
+                            new_lb = val;
+                            new_ub = val;
+                        } else if (csense == ConstraintSense::RANGED) {
+                            real_t u_val = work_cons[i].range_upper / a;
+                            if (a > 0.0) {
+                                new_lb = val;
+                                new_ub = u_val;
+                            } else {
+                                new_lb = u_val;
+                                new_ub = val;
+                            }
+                        }
+
+                        // Tighten bounds
+                        if (new_lb > work_vars[j].lower_bound) work_vars[j].lower_bound = new_lb;
+                        if (new_ub < work_vars[j].upper_bound) work_vars[j].upper_bound = new_ub;
+                        result.postsolve.record_tightened_bounds(static_cast<index_t>(j), work_vars[j].lower_bound, work_vars[j].upper_bound);
+
+                        if (work_vars[j].lower_bound > work_vars[j].upper_bound + 1e-12) {
+                            result.status = PresolveStatus::INFEASIBLE;
+                            auto end_time = std::chrono::high_resolution_clock::now();
+                            result.stats.presolve_time_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+                            return result;
+                        }
+
+                        active_cons[i] = false;
+                        changed = true;
+                        result.stats.transformations.push_back({
+                            ReductionType::SINGLETON_ROW,
+                            "Singleton row " + work_cons[i].name + " tightened variable " + work_vars[j].name,
+                            work_vars[j].name, static_cast<index_t>(j), static_cast<index_t>(i), val
+                        });
+                    }
+                }
+            }
+        }
+
+        // Pass E: Big-M Coefficient Tightening
+        if (options.enable_bound_tightening) {
+            for (size_t i = 0; i < num_cons; ++i) {
+                if (!active_cons[i]) continue;
+                auto& terms = work_cons[i].terms;
+                if (work_cons[i].sense != ConstraintSense::LESS_EQUAL) continue;
+
+                for (auto& term : terms) {
+                    index_t v_idx = term.first;
+                    size_t j = static_cast<size_t>(v_idx);
+                    if (!active_vars[j]) continue;
+
+                    if (work_vars[j].type == VariableType::BINARY && term.second < -1e-5) {
+                        real_t cur_coeff = term.second;
+
+                        real_t max_pos_sum = 0.0;
+                        bool can_bound = true;
+
+                        for (const auto& o_term : terms) {
+                            if (o_term.first == v_idx) continue;
+                            size_t oj = static_cast<size_t>(o_term.first);
+                            if (!active_vars[oj]) continue;
+
+                            if (o_term.second > 0.0) {
+                                if (std::isinf(work_vars[oj].upper_bound)) {
+                                    can_bound = false;
+                                    break;
+                                }
+                                max_pos_sum += o_term.second * work_vars[oj].upper_bound;
+                            } else if (o_term.second < 0.0) {
+                                if (!std::isinf(work_vars[oj].lower_bound)) {
+                                    max_pos_sum += o_term.second * work_vars[oj].lower_bound;
+                                }
+                            }
+                        }
+
+                        if (can_bound && max_pos_sum > 0.0) {
+                            real_t required_m = max_pos_sum - work_cons[i].rhs;
+                            if (required_m > 0.0 && -cur_coeff > required_m + 1e-4) {
+                                term.second = -required_m;
+                                changed = true;
+                                result.stats.transformations.push_back({
+                                    ReductionType::BOUND_TIGHTENING,
+                                    "Tightened Big-M coefficient on " + work_cons[i].name + " for " + work_vars[j].name + " from " + std::to_string(cur_coeff) + " to -" + std::to_string(required_m),
+                                    work_vars[j].name, static_cast<index_t>(j), static_cast<index_t>(i), -required_m
+                                });
+                            }
                         }
                     }
                 }

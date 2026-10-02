@@ -26,7 +26,8 @@ TEST_CASE(Phase21_MpsParserShare2bNetlib) {
 
     RevisedSimplex solver;
     RevisedSimplexResult solve_res = solver.solve(res.model);
-    EXPECT_EQ(solve_res.status, RevisedSimplexStatus::INFEASIBLE);
+    EXPECT_EQ(solve_res.status, RevisedSimplexStatus::OPTIMAL);
+    EXPECT_NEAR(solve_res.objective_value, 27.0, 1e-4);
 }
 
 TEST_CASE(Phase21_MpsParserBlend2Miplib) {

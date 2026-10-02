@@ -43,6 +43,7 @@ public:
     void initialize(const LPModel& orig_model);
     void record_fixed_var(index_t orig_var_idx, real_t val);
     void record_var_map(index_t orig_var_idx, index_t reduced_var_idx);
+    void record_tightened_bounds(index_t orig_var_idx, real_t lb, real_t ub);
 
     // Solution mapping: reduced space -> original space
     std::vector<real_t> recover_solution(const std::vector<real_t>& reduced_x) const;
@@ -59,6 +60,8 @@ private:
     std::vector<real_t> fixed_values_;
     std::vector<bool> is_fixed_;
     std::vector<index_t> orig_to_reduced_var_;
+    std::vector<real_t> tightened_lb_;
+    std::vector<real_t> tightened_ub_;
 };
 
 struct PresolveStatistics {
@@ -70,6 +73,15 @@ struct PresolveStatistics {
     size_t cons_removed{0};
     double presolve_time_ms{0.0};
     std::vector<TransformationRecord> transformations;
+};
+
+struct PresolveOptions {
+    bool enable_fixed_variable{true};
+    bool enable_empty_row{true};
+    bool enable_empty_col{true};
+    bool enable_singleton_row{true};
+    bool enable_bound_tightening{true};
+    bool enable_scaling{true};
 };
 
 struct PresolveResult {
@@ -86,7 +98,7 @@ public:
     PresolveEngine() = default;
 
     // Presolve entry point
-    PresolveResult presolve(const LPModel& original_model) const;
+    PresolveResult presolve(const LPModel& original_model, const PresolveOptions& options = {}) const;
 };
 
 } // namespace bharatopt

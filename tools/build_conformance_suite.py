@@ -260,7 +260,7 @@ def solve_with_highs(filepath, is_milp=False):
     return st, obj, (t1 - t0) * 1000.0
 
 def solve_with_bharatopt(filepath, mode="AUTO"):
-    cmd = ["build/conformance_runner.exe", filepath, mode]
+    cmd = ["build_ninja/conformance_runner.exe", filepath, mode]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         return "EXEC_FAIL", 0.0, 0.0

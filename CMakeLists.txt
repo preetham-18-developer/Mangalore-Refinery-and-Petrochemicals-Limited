@@ -36,6 +36,10 @@ endif()
 add_executable(bharatopt_cli src/main.cpp)
 target_link_libraries(bharatopt_cli PRIVATE bharatopt_core)
 
+# Conformance Runner Target
+add_executable(conformance_runner src/conformance_runner.cpp)
+target_link_libraries(conformance_runner PRIVATE bharatopt_core)
+
 # Subdirectories
 enable_testing()
 add_subdirectory(tests)

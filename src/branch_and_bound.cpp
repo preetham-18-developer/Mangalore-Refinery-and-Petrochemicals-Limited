@@ -1,4 +1,5 @@
 #include <bharatopt/branch_and_bound.hpp>
+#include <bharatopt/solution_verifier.hpp>
 #include <chrono>
 #include <cmath>
 #include <sstream>
@@ -167,7 +168,13 @@ static LpSolveResult solve_node_lp_relaxation(
                     }
                 }
 
-                if (bounds_ok) {
+                VerificationOptions v_opts;
+                v_opts.feasibility_tolerance = 1e-4;
+                v_opts.integrality_tolerance = 1e-4;
+                SolutionVerifier verifier(v_opts);
+                bool is_valid = bounds_ok && verifier.verify(lp_model, warm_res.primal_solution, v_opts).verified;
+
+                if (is_valid) {
                     telemetry.warm_starts_accepted++;
                     res.is_optimal = true;
                     res.objective_value = warm_res.objective_value;
@@ -359,42 +366,58 @@ BnBResult BranchAndBoundEngine::solve(const LPModel& model) {
         return result;
     }
 
-    // Root Feasibility Pump & "Round Up If LP > 0" Primal Fixing Heuristic
+    // Root Node General LP Diving / Feasibility Pump Heuristic
+    // Operates generally on any LP relaxation solution without variable name assumptions
     {
-        LPModel all_one_model = model;
-        for (size_t j = 0; j < num_vars; ++j) {
-            if (vars[j].type == VariableType::BINARY || vars[j].type == VariableType::INTEGER) {
-                real_t val = root_node.lp_solution[j];
-                real_t rounded = (val > 1e-6) ? 1.0 : 0.0;
-                if (vars[j].type == VariableType::INTEGER && val > 1.0) {
-                    rounded = std::ceil(val);
-                }
-                auto& v = all_one_model.get_variable(static_cast<index_t>(j));
-                v.lower_bound = std::max(v.lower_bound, rounded);
-                v.upper_bound = std::min(v.upper_bound, rounded);
-            }
-        }
+        LPModel dive_model = model;
+        std::vector<real_t> current_lp_sol = root_node.lp_solution;
 
-        DualRevisedSimplex heur_solver;
-        DualRevisedSimplexResult heur_res = heur_solver.solve(all_one_model);
-        if (heur_res.status == DualRevisedSimplexStatus::OPTIMAL) {
-            IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(
-                model, heur_res.primal_solution, config_.integrality_tolerance
-            );
-            if (heur_ver.is_integer_feasible) {
-                real_t calc_obj = model.obj_offset();
-                for (size_t j = 0; j < num_vars; ++j) {
-                    calc_obj += vars[j].obj_coeff * heur_res.primal_solution[j];
+        for (int pass = 0; pass < 5; ++pass) {
+            bool any_fixed = false;
+            for (size_t j = 0; j < num_vars; ++j) {
+                if (vars[j].type == VariableType::BINARY || vars[j].type == VariableType::INTEGER) {
+                    real_t val = current_lp_sol[j];
+                    real_t nearest_int = std::round(val);
+                    if (std::abs(val - nearest_int) > config_.integrality_tolerance) {
+                        auto& v = dive_model.get_variable(static_cast<index_t>(j));
+                        if (vars[j].type == VariableType::BINARY) {
+                            nearest_int = (val >= 0.5) ? 1.0 : 0.0;
+                        }
+                        v.lower_bound = std::max(v.lower_bound, nearest_int);
+                        v.upper_bound = std::min(v.upper_bound, nearest_int);
+                        any_fixed = true;
+                    }
                 }
-                if (!result.incumbent.has_incumbent || calc_obj < result.incumbent.objective_value) {
-                    result.incumbent.has_incumbent = true;
-                    result.incumbent.objective_value = calc_obj;
-                    result.incumbent.solution = heur_res.primal_solution;
-                    result.incumbent.originating_node_id = 0;
-                    result.incumbent.verification = heur_ver;
-                    result.telemetry.incumbent_updates++;
-                    result.telemetry.final_incumbent_obj = calc_obj;
+            }
+
+            if (!any_fixed) break;
+
+            DualRevisedSimplex heur_solver;
+            DualRevisedSimplexResult heur_res = heur_solver.solve(dive_model);
+            if (heur_res.status == DualRevisedSimplexStatus::OPTIMAL) {
+                current_lp_sol = heur_res.primal_solution;
+                IntegerVerificationResult heur_ver = MilpFoundation::verify_integer_feasibility(
+                    model, current_lp_sol, config_.integrality_tolerance
+                );
+                SolutionVerifier verifier;
+                if (heur_ver.is_integer_feasible && verifier.verify(model, current_lp_sol).verified) {
+                    real_t calc_obj = model.obj_offset();
+                    for (size_t j = 0; j < num_vars; ++j) {
+                        calc_obj += vars[j].obj_coeff * current_lp_sol[j];
+                    }
+                    if (!result.incumbent.has_incumbent || is_better_than_incumbent(calc_obj, result.incumbent, sense)) {
+                        result.incumbent.has_incumbent = true;
+                        result.incumbent.objective_value = calc_obj;
+                        result.incumbent.solution = current_lp_sol;
+                        result.incumbent.originating_node_id = 0;
+                        result.incumbent.verification = heur_ver;
+                        result.telemetry.incumbent_updates++;
+                        result.telemetry.final_incumbent_obj = calc_obj;
+                    }
+                    break;
                 }
+            } else {
+                break;
             }
         }
     }

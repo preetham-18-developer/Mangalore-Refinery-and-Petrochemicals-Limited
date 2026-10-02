@@ -2,6 +2,8 @@
 build/
 build_release/
 build_debug/
+build_msvc/
+build_ninja/
 bin/
 out/
 *.exe

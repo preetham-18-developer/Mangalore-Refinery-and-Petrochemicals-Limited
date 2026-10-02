@@ -6,11 +6,38 @@
 
 namespace bharatopt {
 
+static real_t safe_stod(const std::string& str) {
+    if (str.empty()) return 0.0;
+    std::string s = str;
+    size_t start = s.find_first_not_of(" \t");
+    if (start == std::string::npos) return 0.0;
+    size_t end = s.find_last_not_of(" \t");
+    s = s.substr(start, end - start + 1);
+
+    if (s[0] == '.') {
+        s = "0" + s;
+    } else if ((s[0] == '-' || s[0] == '+') && s.size() > 1 && s[1] == '.') {
+        s.insert(1, "0");
+    }
+
+    for (char& c : s) {
+        if (c == 'D' || c == 'd') c = 'E';
+    }
+
+    return std::stod(s);
+}
+
 std::vector<std::string> MpsParser::tokenize_line(const std::string& line) const {
     std::vector<std::string> tokens;
     if (line.empty() || line[0] == '*') return tokens; // Comment line
 
-    std::istringstream iss(line);
+    std::string clean_line = line;
+    size_t dollar_pos = clean_line.find('$');
+    if (dollar_pos != std::string::npos) {
+        clean_line = clean_line.substr(0, dollar_pos);
+    }
+
+    std::istringstream iss(clean_line);
     std::string token;
     while (iss >> token) {
         tokens.push_back(token);
@@ -19,26 +46,39 @@ std::vector<std::string> MpsParser::tokenize_line(const std::string& line) const
 }
 
 MpsParseResult MpsParser::parse_file(const std::string& filepath) const {
-    std::ifstream file(filepath);
-    if (!file.is_open()) {
-        std::ifstream file_up1("../" + filepath);
-        if (file_up1.is_open()) {
-            std::string content((std::istreambuf_iterator<char>(file_up1)), std::istreambuf_iterator<char>());
-            return parse_string(content);
-        }
-        std::ifstream file_up2("../../" + filepath);
-        if (file_up2.is_open()) {
-            std::string content((std::istreambuf_iterator<char>(file_up2)), std::istreambuf_iterator<char>());
-            return parse_string(content);
-        }
-        MpsParseResult res;
-        res.status = MpsParseStatus::FILE_NOT_FOUND;
-        res.error_message = "Could not open MPS file: " + filepath;
-        return res;
+    std::vector<std::string> paths_to_try = {
+        filepath,
+        "../" + filepath,
+        "../../" + filepath,
+        "benchmarks/corpus/" + filepath,
+        "benchmarks/netlib/" + filepath,
+        "benchmarks/miplib/" + filepath
+    };
+
+    // Extract filename if filepath contains directory components
+    size_t last_slash = filepath.find_last_of("/\\");
+    std::string fname = (last_slash != std::string::npos) ? filepath.substr(last_slash + 1) : filepath;
+
+    for (const std::string& prefix : {"", "../", "../../", "../../../"}) {
+        paths_to_try.push_back(prefix + filepath);
+        paths_to_try.push_back(prefix + "benchmarks/corpus/" + fname);
+        paths_to_try.push_back(prefix + "benchmarks/netlib/" + fname);
+        paths_to_try.push_back(prefix + "benchmarks/miplib/" + fname);
+        paths_to_try.push_back(prefix + fname);
     }
 
-    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    return parse_string(content);
+    for (const auto& p : paths_to_try) {
+        std::ifstream f(p);
+        if (f.is_open()) {
+            std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            return parse_string(content);
+        }
+    }
+
+    MpsParseResult res;
+    res.status = MpsParseStatus::FILE_NOT_FOUND;
+    res.error_message = "Could not open MPS file: " + filepath;
+    return res;
 }
 
 enum class MpsSection {
@@ -64,6 +104,10 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
     std::string obj_row_name = "";
     bool explicit_objsense = false;
     ObjectiveSense mps_sense = ObjectiveSense::MINIMIZE;
+
+    std::string selected_rhs_vec = "";
+    std::string selected_range_vec = "";
+    std::string selected_bound_vec = "";
 
     struct RowDef {
         std::string name;
@@ -107,7 +151,10 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
         std::string keyword = tokens[0];
         std::transform(keyword.begin(), keyword.end(), keyword.begin(), ::toupper);
 
-        bool is_header_line = (line[0] != ' ' && line[0] != '\t') || section == MpsSection::NONE;
+        bool is_header_line = (line[0] != ' ' && line[0] != '\t') || section == MpsSection::NONE ||
+                              keyword == "NAME" || keyword == "OBJSENSE" || keyword == "ROWS" ||
+                              keyword == "COLUMNS" || keyword == "RHS" || keyword == "RANGES" ||
+                              keyword == "BOUNDS" || keyword == "ENDATA";
 
         if (is_header_line) {
             if (keyword == "NAME") {
@@ -184,7 +231,6 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
             row_map[rname] = {rname, rtype};
             row_order.push_back(rname);
         } else if (section == MpsSection::COLUMNS) {
-            // Check for integer marker line: var_name 'MARKER' 'INTORG' / 'INTEND'
             bool is_marker = false;
             for (const auto& tok : tokens) {
                 std::string utok = tok;
@@ -225,7 +271,7 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
                 if (k + 1 >= tokens.size()) break;
                 std::string rname = tokens[k];
                 try {
-                    real_t val = std::stod(tokens[k + 1]);
+                    real_t val = safe_stod(tokens[k + 1]);
                     col_map[col_name].push_back({rname, val});
                 } catch (...) {
                     res.status = MpsParseStatus::INVALID_NUMERIC_VALUE;
@@ -236,13 +282,15 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
         } else if (section == MpsSection::RHS) {
             size_t start_idx = 0;
             if (row_map.find(tokens[0]) == row_map.end() && tokens.size() > 1) {
+                if (selected_rhs_vec.empty()) selected_rhs_vec = tokens[0];
+                if (tokens[0] != selected_rhs_vec) continue;
                 start_idx = 1;
             }
             for (size_t k = start_idx; k < tokens.size(); k += 2) {
                 if (k + 1 >= tokens.size()) break;
                 std::string rname = tokens[k];
                 try {
-                    real_t val = std::stod(tokens[k + 1]);
+                    real_t val = safe_stod(tokens[k + 1]);
                     rhs_map[rname] = val;
                 } catch (...) {
                     res.status = MpsParseStatus::INVALID_NUMERIC_VALUE;
@@ -251,12 +299,17 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
                 }
             }
         } else if (section == MpsSection::RANGES) {
-            size_t start_idx = (tokens.size() % 2 == 1) ? 1 : 0;
+            size_t start_idx = 0;
+            if (row_map.find(tokens[0]) == row_map.end() && tokens.size() > 1) {
+                if (selected_range_vec.empty()) selected_range_vec = tokens[0];
+                if (tokens[0] != selected_range_vec) continue;
+                start_idx = 1;
+            }
             for (size_t k = start_idx; k < tokens.size(); k += 2) {
                 if (k + 1 >= tokens.size()) break;
                 std::string rname = tokens[k];
                 try {
-                    real_t val = std::stod(tokens[k + 1]);
+                    real_t val = safe_stod(tokens[k + 1]);
                     range_map[rname] = val;
                 } catch (...) {
                     res.status = MpsParseStatus::INVALID_NUMERIC_VALUE;
@@ -274,20 +327,17 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
             std::string btype = tokens[0];
             std::transform(btype.begin(), btype.end(), btype.begin(), ::toupper);
 
-            size_t var_idx = 2;
-            size_t val_idx = 3;
-            if (tokens.size() == 3) {
-                var_idx = 2;
-                val_idx = 2; // Default 0
-            }
+            std::string vec_name = tokens[1];
+            if (selected_bound_vec.empty()) selected_bound_vec = vec_name;
+            if (vec_name != selected_bound_vec) continue;
 
-            std::string vname = tokens[var_idx];
+            std::string vname = tokens[2];
             auto& bdef = bound_map[vname];
 
             real_t val = 0.0;
-            if (val_idx < tokens.size()) {
+            if (tokens.size() > 3) {
                 try {
-                    val = std::stod(tokens[val_idx]);
+                    val = safe_stod(tokens[3]);
                 } catch (...) {
                     val = 0.0;
                 }

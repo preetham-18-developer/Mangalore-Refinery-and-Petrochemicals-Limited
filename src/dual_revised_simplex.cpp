@@ -103,6 +103,9 @@ StandardFormLP DualRevisedSimplex::create_standard_form(const LPModel& model) co
         if (cons.sense == ConstraintSense::RANGED) {
             process_single_row(ConstraintSense::GREATER_EQUAL, cons.rhs, cons.name + "_lower");
             process_single_row(ConstraintSense::LESS_EQUAL, cons.range_upper, cons.name + "_upper");
+        } else if (cons.sense == ConstraintSense::EQUAL) {
+            process_single_row(ConstraintSense::GREATER_EQUAL, cons.rhs, cons.name + "_lower");
+            process_single_row(ConstraintSense::LESS_EQUAL, cons.rhs, cons.name + "_upper");
         } else {
             process_single_row(cons.sense, cons.rhs, cons.name);
         }
@@ -173,6 +176,13 @@ StandardFormLP DualRevisedSimplex::create_standard_form(const LPModel& model) co
 
         size_t slack_col = decision_cols + i;
         std_lp.A[i][slack_col] = 1.0;
+    }
+
+    // Adjust objective constant for shifts
+    for (size_t j = 0; j < std_lp.orig_vars; ++j) {
+        if (std_lp.var_shifts[j] != 0.0) {
+            std_lp.c0 += model.get_variable(static_cast<index_t>(j)).obj_coeff * std_lp.var_shifts[j];
+        }
     }
 
     return std_lp;
@@ -334,8 +344,21 @@ DualRevisedSimplexResult DualRevisedSimplex::solve(const LPModel& model) {
 
     if (lp.num_rows == 0 || lp.num_cols == 0) {
         result.status = DualRevisedSimplexStatus::OPTIMAL;
-        result.objective_value = lp.c0;
         result.primal_solution.assign(model.num_variables(), 0.0);
+        for (size_t j = 0; j < model.num_variables(); ++j) {
+            const auto& v = model.get_variable(static_cast<index_t>(j));
+            real_t c = (model.sense() == ObjectiveSense::MINIMIZE) ? v.obj_coeff : -v.obj_coeff;
+            if (c > 0.0) {
+                result.primal_solution[j] = !std::isinf(v.lower_bound) ? v.lower_bound : 0.0;
+            } else if (c < 0.0) {
+                result.primal_solution[j] = !std::isinf(v.upper_bound) ? v.upper_bound : 0.0;
+            } else {
+                if (!std::isinf(v.lower_bound)) result.primal_solution[j] = v.lower_bound;
+                else if (!std::isinf(v.upper_bound)) result.primal_solution[j] = v.upper_bound;
+                else result.primal_solution[j] = 0.0;
+            }
+        }
+        result.objective_value = recompute_original_objective(model, result.primal_solution);
         result.message = "Trivial zero-dimension LP model.";
         return result;
     }
@@ -395,74 +418,42 @@ DualRevisedSimplexResult DualRevisedSimplex::solve(const LPModel& model) {
 
     // Step 6: Verify Dual Feasibility of Initial Basis
     if (!check_dual_feasibility(basis, r)) {
-        // If model has negative minimization cost coefficients (e.g. Min -5x1), initial basis is not dual feasible
-        bool has_neg_cost = false;
-        for (size_t j = 0; j < model.num_variables(); ++j) {
-            const auto& var = model.get_variable(static_cast<index_t>(j));
-            if (model.sense() == ObjectiveSense::MINIMIZE && var.obj_coeff < -options_.optimality_tolerance) {
-                has_neg_cost = true;
+        bool primal_feasible = true;
+        for (size_t i = 0; i < lp.num_rows; ++i) {
+            if (lp.b[i] < -options_.feasibility_tolerance) {
+                primal_feasible = false;
                 break;
             }
         }
-        if (has_neg_cost) {
-            result.status = DualRevisedSimplexStatus::UNSUPPORTED_INITIAL_BASIS;
-            result.message = "Initial basis is not dual feasible for Dual Revised Simplex.";
-            return result;
-        }
 
-        // Otherwise attempt Dual LP formulation
-        LPModel dual_model("dual_of_" + model.name());
-        dual_model.set_sense(ObjectiveSense::MINIMIZE);
-        dual_model.set_obj_offset(model.obj_offset());
+        if (primal_feasible) {
+            RevisedSimplexOptions r_opts;
+            r_opts.feasibility_tolerance = options_.feasibility_tolerance;
+            r_opts.optimality_tolerance = options_.optimality_tolerance;
+            r_opts.pivot_tolerance = options_.pivot_tolerance;
+            RevisedSimplex rev_solver(r_opts);
+            RevisedSimplexResult rev_res = rev_solver.solve(model);
 
-        std::vector<index_t> dual_vars(model.num_constraints());
-        for (size_t i = 0; i < model.num_constraints(); ++i) {
-            const auto& cons = model.get_constraint(static_cast<index_t>(i));
-            real_t obj_coeff = cons.rhs;
-            if (model.sense() == ObjectiveSense::MAXIMIZE) {
-                obj_coeff = cons.rhs;
+            if (rev_res.status == RevisedSimplexStatus::OPTIMAL) {
+                result.status = DualRevisedSimplexStatus::OPTIMAL;
+                result.objective_value = rev_res.objective_value;
+                result.primal_solution = rev_res.primal_solution;
+                result.dual_solution = rev_res.dual_solution;
+                result.final_basis = rev_res.final_basis;
+                result.iterations = rev_res.iterations;
+                result.message = "Initial basis primal feasible; solved via Primal Revised Simplex.";
+                return result;
+            } else if (rev_res.status == RevisedSimplexStatus::UNBOUNDED) {
+                result.status = DualRevisedSimplexStatus::UNBOUNDED;
+                return result;
+            } else if (rev_res.status == RevisedSimplexStatus::INFEASIBLE) {
+                result.status = DualRevisedSimplexStatus::INFEASIBLE;
+                return result;
             }
-            dual_vars[i] = dual_model.add_variable("y_" + std::to_string(i), 0.0, BHARATOPT_INFINITY, obj_coeff);
-        }
-
-        real_t c_mult = (model.sense() == ObjectiveSense::MAXIMIZE) ? 1.0 : -1.0;
-        for (size_t j = 0; j < model.num_variables(); ++j) {
-            const auto& var = model.get_variable(static_cast<index_t>(j));
-            real_t target_rhs = var.obj_coeff * c_mult;
-
-            std::vector<std::pair<index_t, real_t>> dual_terms;
-            for (size_t i = 0; i < model.num_constraints(); ++i) {
-                const auto& cons = model.get_constraint(static_cast<index_t>(i));
-                for (const auto& term : cons.terms) {
-                    if (term.first == static_cast<index_t>(j)) {
-                        dual_terms.push_back({dual_vars[i], term.second});
-                    }
-                }
-            }
-            dual_model.add_constraint("dual_c_" + std::to_string(j), dual_terms, ConstraintSense::GREATER_EQUAL, target_rhs);
-        }
-
-        DualRevisedSimplex dual_solver(options_);
-        DualRevisedSimplexResult dual_res = dual_solver.solve(dual_model);
-
-        if (dual_res.status == DualRevisedSimplexStatus::OPTIMAL) {
-            result.status = DualRevisedSimplexStatus::OPTIMAL;
-            result.iterations = dual_res.iterations;
-            result.final_basis = dual_res.final_basis;
-            result.message = "Dual Revised Simplex solved via Dual LP formulation.";
-
-            result.primal_solution.assign(model.num_variables(), 0.0);
-            for (size_t j = 0; j < model.num_variables(); ++j) {
-                if (j < dual_res.dual_solution.size()) {
-                    result.primal_solution[j] = std::abs(dual_res.dual_solution[j]);
-                }
-            }
-            result.objective_value = recompute_original_objective(model, result.primal_solution);
-            return result;
         }
 
         result.status = DualRevisedSimplexStatus::UNSUPPORTED_INITIAL_BASIS;
-        result.message = "Initial basis is not dual feasible for Dual Revised Simplex.";
+        result.message = "Initial basis is neither dual feasible nor primal feasible for Dual Revised Simplex.";
         return result;
     }
 
@@ -490,16 +481,35 @@ DualRevisedSimplexResult DualRevisedSimplex::solve(const LPModel& model) {
             result.final_basis = basis;
             result.message = "Dual Revised Simplex converged to OPTIMAL solution.";
 
-            std::vector<real_t> std_x(lp.num_cols, 0.0);
-            for (size_t i = 0; i < lp.num_rows; ++i) {
-                std_x[basis.basic_vars[i]] = std::max(0.0, x_B[i]);
+            result.primal_solution.assign(lp.orig_vars, 0.0);
+            for (size_t i = 0; i < basis.num_rows; ++i) {
+                index_t bvar = basis.basic_vars[i];
+                index_t orig_j = lp.col_to_orig_var[bvar];
+                if (orig_j >= 0 && static_cast<size_t>(orig_j) < lp.orig_vars) {
+                    real_t val = std::max(0.0, x_B[i]);
+                    const auto& var = model.get_variable(orig_j);
+                    if (var.is_free()) {
+                        if (lp.col_names[bvar].back() == '+') result.primal_solution[orig_j] += val;
+                        else if (lp.col_names[bvar].back() == '-') result.primal_solution[orig_j] -= val;
+                    } else {
+                        result.primal_solution[orig_j] = val + lp.var_shifts[orig_j];
+                    }
+                }
             }
 
-            result.primal_solution.assign(model.num_variables(), 0.0);
-            for (size_t j = 0; j < lp.num_cols; ++j) {
-                index_t orig_idx = lp.col_to_orig_var[j];
-                if (orig_idx >= 0 && orig_idx < static_cast<index_t>(model.num_variables())) {
-                    result.primal_solution[orig_idx] = std_x[j] + lp.var_shifts[j];
+            for (size_t j = 0; j < lp.orig_vars; ++j) {
+                const auto& var = model.get_variable(static_cast<index_t>(j));
+                if (!var.is_free() && lp.var_shifts[j] != 0.0) {
+                    bool is_in_basis = false;
+                    for (size_t i = 0; i < basis.num_rows; ++i) {
+                        if (lp.col_to_orig_var[basis.basic_vars[i]] == static_cast<index_t>(j)) {
+                            is_in_basis = true;
+                            break;
+                        }
+                    }
+                    if (!is_in_basis) {
+                        result.primal_solution[j] = lp.var_shifts[j];
+                    }
                 }
             }
 
@@ -665,16 +675,35 @@ DualRevisedSimplexResult DualRevisedSimplex::solve_warm_start(const LPModel& mod
             result.final_basis = basis;
             result.message = "Dual Revised Simplex warm start converged to OPTIMAL solution.";
 
-            std::vector<real_t> std_x(lp.num_cols, 0.0);
-            for (size_t i = 0; i < lp.num_rows; ++i) {
-                std_x[basis.basic_vars[i]] = std::max(0.0, x_B[i]);
+            result.primal_solution.assign(lp.orig_vars, 0.0);
+            for (size_t i = 0; i < basis.num_rows; ++i) {
+                index_t bvar = basis.basic_vars[i];
+                index_t orig_j = lp.col_to_orig_var[bvar];
+                if (orig_j >= 0 && static_cast<size_t>(orig_j) < lp.orig_vars) {
+                    real_t val = std::max(0.0, x_B[i]);
+                    const auto& var = model.get_variable(orig_j);
+                    if (var.is_free()) {
+                        if (lp.col_names[bvar].back() == '+') result.primal_solution[orig_j] += val;
+                        else if (lp.col_names[bvar].back() == '-') result.primal_solution[orig_j] -= val;
+                    } else {
+                        result.primal_solution[orig_j] = val + lp.var_shifts[orig_j];
+                    }
+                }
             }
 
-            result.primal_solution.assign(model.num_variables(), 0.0);
-            for (size_t j = 0; j < lp.num_cols; ++j) {
-                index_t orig_idx = lp.col_to_orig_var[j];
-                if (orig_idx >= 0 && orig_idx < static_cast<index_t>(model.num_variables())) {
-                    result.primal_solution[orig_idx] = std_x[j] + lp.var_shifts[j];
+            for (size_t j = 0; j < lp.orig_vars; ++j) {
+                const auto& var = model.get_variable(static_cast<index_t>(j));
+                if (!var.is_free() && lp.var_shifts[j] != 0.0) {
+                    bool is_in_basis = false;
+                    for (size_t i = 0; i < basis.num_rows; ++i) {
+                        if (lp.col_to_orig_var[basis.basic_vars[i]] == static_cast<index_t>(j)) {
+                            is_in_basis = true;
+                            break;
+                        }
+                    }
+                    if (!is_in_basis) {
+                        result.primal_solution[j] = lp.var_shifts[j];
+                    }
                 }
             }
 

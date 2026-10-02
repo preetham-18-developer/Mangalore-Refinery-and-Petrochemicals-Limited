@@ -408,31 +408,33 @@ int CLIDashboardApp::run(int argc, char* argv[]) {
     double total_time_ms = std::chrono::duration<double, std::milli>(total_end - total_start).count();
 
     InfeasibilityDiagnosis diag = InfeasibilityAnalyzer::analyze(parse_res.model);
-    if (solve_status == "INFEASIBLE" || (presolve_res_ptr != nullptr && presolve_res_ptr->status == PresolveStatus::INFEASIBLE) || diag.is_infeasible) {
+    if (presolve_res_ptr != nullptr && presolve_res_ptr->status == PresolveStatus::INFEASIBLE) {
         solve_status = "INFEASIBLE";
+    }
+
+    TerminalDashboard::render_solve_section(solve_status, objective, iterations, nodes, solve_time_ms, total_time_ms);
+    if (solve_status == "INFEASIBLE") {
         if (!diag.is_infeasible) {
             diag.is_infeasible = true;
             diag.summary = "Model constraint infeasibility detected";
             diag.detailed_analysis = "Constraint lower/upper bound combination cannot be satisfied.";
         }
-    }
-
-    TerminalDashboard::render_solve_section(solve_status, objective, iterations, nodes, solve_time_ms, total_time_ms);
-    if (solve_status == "INFEASIBLE") {
         TerminalDashboard::render_infeasibility_section(diag);
     }
 
     // 6. Independent Solution Verification against ORIGINAL model
     std::unique_ptr<VerificationResult> v_res_ptr;
-    if (opts.verify && solve_status == "OPTIMAL" && !candidate_solution.empty()) {
-        SolutionVerifier verifier;
+    if (opts.verify && solve_status == "OPTIMAL") {
         std::vector<real_t> full_solution = candidate_solution;
 
         if (opts.presolve && presolve_res_ptr != nullptr) {
             full_solution = presolve_res_ptr->postsolve.recover_solution(candidate_solution);
         }
 
-        v_res_ptr = std::make_unique<VerificationResult>(verifier.verify(parse_res.model, full_solution, objective));
+        if (full_solution.size() == parse_res.model.num_variables()) {
+            SolutionVerifier verifier;
+            v_res_ptr = std::make_unique<VerificationResult>(verifier.verify(parse_res.model, full_solution, objective));
+        }
     }
 
     TerminalDashboard::render_verification_section(opts.verify, v_res_ptr.get());
