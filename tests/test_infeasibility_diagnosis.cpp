@@ -28,7 +28,7 @@ TEST_CASE(InfeasibilityDiagnosisTest) {
     InfeasibilityDiagnosis diag1 = InfeasibilityAnalyzer::analyze(infeas_model);
     std::cout << "\n=== INFEASIBILITY DIAGNOSIS TEST 1 ===\n";
     std::cout << "Is Infeasible: " << (diag1.is_infeasible ? "YES" : "NO") << "\n";
-    std::cout << "IIS String   : " << diag1.to_string() << "\n";
+    std::cout << "Cert String  : " << diag1.to_string() << "\n";
 
     EXPECT_TRUE(diag1.is_infeasible);
     EXPECT_FALSE(diag1.conflicting_rows.empty());
@@ -65,7 +65,7 @@ TEST_CASE(InfeasibilityDiagnosisTest) {
     InfeasibilityDiagnosis diag2 = InfeasibilityAnalyzer::analyze(proc_model);
     std::cout << "\n=== INFEASIBILITY DIAGNOSIS TEST 2 (PROCUREMENT) ===\n";
     std::cout << "Is Infeasible: " << (diag2.is_infeasible ? "YES" : "NO") << "\n";
-    std::cout << "IIS String   : " << diag2.to_string() << "\n";
+    std::cout << "Cert String  : " << diag2.to_string() << "\n";
 
     EXPECT_TRUE(diag2.is_infeasible);
     EXPECT_TRUE(diag2.to_string().find("1150") != std::string::npos || diag2.to_string().find("forced min") != std::string::npos);
@@ -80,7 +80,7 @@ TEST_CASE(InfeasibilityDiagnosisTest) {
     for (size_t r = 0; r < diag_orig.conflicting_rows.size(); ++r) {
         std::cout << diag_orig.conflicting_rows[r] << (r + 1 < diag_orig.conflicting_rows.size() ? " ∩ " : "");
     }
-    std::cout << "\nIIS String   : " << diag_orig.to_string() << "\n";
+    std::cout << "\nCert String  : " << diag_orig.to_string() << "\n";
     EXPECT_TRUE(diag_orig.is_infeasible);
 
     RevisedSimplex proc_solver;

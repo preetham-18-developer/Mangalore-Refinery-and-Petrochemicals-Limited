@@ -25,7 +25,7 @@ function parseCliOutput(stdout, fileName = '') {
     validationStatus: 'PASS',
     presolvePolicy: 'ENABLED',
     presolveStats: { rowsElim: 0, colsElim: 0, timeMs: 0 },
-    autoSelectedEngine: 'DualRevisedSimplex (CPU)',
+    autoSelectedEngine: '',
     executionTarget: 'CPU',
     routingRationale: '',
     status: 'OPTIMAL',
@@ -78,7 +78,7 @@ function parseCliOutput(stdout, fileName = '') {
     } else if (key === 'Presolve Time') {
       result.presolveStats.timeMs = parseFloat(val) || 0;
     } else if (key === 'Selected Solver') {
-      result.autoSelectedEngine = val + ' (CPU)';
+      result.autoSelectedEngine = val;
     } else if (key === 'Execution Target') {
       result.executionTarget = val;
     } else if (key === 'Routing Rationale') {
@@ -87,7 +87,7 @@ function parseCliOutput(stdout, fileName = '') {
       result.status = val;
     } else if (key === 'Optimal Objective') {
       result.objective = val.includes('N/A') ? 'N/A' : (parseFloat(val) || 0);
-    } else if (key === 'IIS Report') {
+    } else if (key.includes('Cert') || key === 'IIS Report') {
       result.infeasibilityDiagnosis = val;
     } else if (key === 'Diagnosis Summary') {
       result.infeasibilitySummary = val;
@@ -112,6 +112,14 @@ function parseCliOutput(stdout, fileName = '') {
 
   if (result.status === 'INFEASIBLE' || result.status === 'UNBOUNDED') {
     result.objective = 'N/A';
+  }
+
+  if (result.autoSelectedEngine) {
+    if (!result.autoSelectedEngine.includes('(')) {
+      result.autoSelectedEngine = `${result.autoSelectedEngine} (${result.executionTarget || 'CPU'})`;
+    }
+  } else {
+    result.autoSelectedEngine = `${result.type === 'MILP' ? 'BranchAndBound' : 'DualRevisedSimplex'} (${result.executionTarget || 'CPU'})`;
   }
 
   // Populate actual solution decision variable values for refinery model & example1 model

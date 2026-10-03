@@ -151,10 +151,10 @@ MpsParseResult MpsParser::parse_string(const std::string& content, const std::st
         std::string keyword = tokens[0];
         std::transform(keyword.begin(), keyword.end(), keyword.begin(), ::toupper);
 
-        bool is_header_line = (line[0] != ' ' && line[0] != '\t') || section == MpsSection::NONE ||
-                              keyword == "NAME" || keyword == "OBJSENSE" || keyword == "ROWS" ||
-                              keyword == "COLUMNS" || keyword == "RHS" || keyword == "RANGES" ||
-                              keyword == "BOUNDS" || keyword == "ENDATA";
+        bool is_header_line = ((line[0] != ' ' && line[0] != '\t') || section == MpsSection::NONE) &&
+                              (keyword == "NAME" || keyword == "OBJSENSE" || keyword == "ROWS" ||
+                               keyword == "COLUMNS" || keyword == "RHS" || keyword == "RANGES" ||
+                               keyword == "BOUNDS" || keyword == "ENDATA");
 
         if (is_header_line) {
             if (keyword == "NAME") {

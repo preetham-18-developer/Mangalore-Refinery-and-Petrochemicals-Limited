@@ -129,7 +129,7 @@
     "objective": 7.99995,
     "max_constraint_violation": 0,
     "verification_status": "VERIFIED",
-    "solve_time_ms": 1.393,
+    "solve_time_ms": 0.551,
     "numerical_failure": false,
     "native_cuda": false,
     "gpu_status": "CPU_FALLBACK"
@@ -156,7 +156,7 @@
     "objective": 7.99995,
     "max_constraint_violation": 0,
     "verification_status": "VERIFIED",
-    "solve_time_ms": 2.67,
+    "solve_time_ms": 0.546,
     "numerical_failure": false,
     "native_cuda": false,
     "gpu_status": "CPU_FALLBACK"

@@ -208,14 +208,18 @@ ValidationResult ModelValidator::validate(const LPModel& model) const {
 std::string InfeasibilityDiagnosis::to_string() const {
     if (!is_infeasible) return "No infeasibility conflicts detected.";
     std::ostringstream oss;
+    if (conflicting_rows.empty()) {
+        if (!detailed_analysis.empty()) return detailed_analysis;
+        return "Model determined infeasible by Branch-and-Bound; no single-row conflict certificate available.";
+    }
     oss << "Constraint Conflict Detected: ";
-    if (!conflicting_rows.empty()) {
-        for (size_t i = 0; i < conflicting_rows.size(); ++i) {
-            if (i + 1 == conflicting_rows.size()) {
-                oss << " vs " << conflicting_rows[i];
-            } else {
-                oss << conflicting_rows[i] << (i + 2 < conflicting_rows.size() ? " ∩ " : "");
-            }
+    for (size_t i = 0; i < conflicting_rows.size(); ++i) {
+        if (i == 0) {
+            oss << conflicting_rows[i];
+        } else if (i + 1 == conflicting_rows.size()) {
+            oss << " vs " << conflicting_rows[i];
+        } else {
+            oss << " ∩ " << conflicting_rows[i];
         }
     }
     if (!detailed_analysis.empty()) {
@@ -328,6 +332,60 @@ InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
             diag.conflicting_rows = {cons.name};
             diag.detailed_analysis = "forced max " + format_number(max_lhs) + " < required " + format_number(req_lower);
             return diag;
+        }
+    }
+
+    // 2.5 Pairwise row interval conflict check (e.g., Row A vs Row B with identical or proportional terms)
+    for (size_t i = 0; i < constraints.size(); ++i) {
+        for (size_t j = i + 1; j < constraints.size(); ++j) {
+            const auto& c1 = constraints[i];
+            const auto& c2 = constraints[j];
+            if (c1.terms.empty() || c1.terms.size() != c2.terms.size()) continue;
+
+            std::unordered_map<index_t, real_t> terms1;
+            for (const auto& t : c1.terms) terms1[t.first] = t.second;
+
+            bool matching = true;
+            real_t scale = -1.0;
+
+            for (const auto& t : c2.terms) {
+                auto it = terms1.find(t.first);
+                if (it == terms1.end()) { matching = false; break; }
+                real_t r = t.second / it->second;
+                if (scale < 0.0) scale = r;
+                else if (std::abs(r - scale) > 1e-6) { matching = false; break; }
+            }
+
+            if (!matching || scale == 0.0) continue;
+
+            real_t r1_min = row_info[i].req_lower;
+            real_t r1_max = row_info[i].req_upper;
+            real_t r2_min = row_info[j].req_lower;
+            real_t r2_max = row_info[j].req_upper;
+
+            if (scale < 0.0) {
+                real_t tmp_min = r2_min;
+                real_t tmp_max = r2_max;
+                r2_min = (tmp_max == BHARATOPT_INFINITY) ? -BHARATOPT_INFINITY : -tmp_max / std::abs(scale);
+                r2_max = (tmp_min == -BHARATOPT_INFINITY) ? BHARATOPT_INFINITY : -tmp_min / std::abs(scale);
+            } else {
+                r2_min = (r2_min == -BHARATOPT_INFINITY) ? -BHARATOPT_INFINITY : r2_min / scale;
+                r2_max = (r2_max == BHARATOPT_INFINITY) ? BHARATOPT_INFINITY : r2_max / scale;
+            }
+
+            real_t effective_min = std::max(r1_min, r2_min);
+            real_t effective_max = std::min(r1_max, r2_max);
+
+            if (effective_min > effective_max + 1e-9) {
+                diag.is_infeasible = true;
+                diag.summary = "Direct constraint interval contradiction";
+                diag.conflicting_rows = {c1.name, c2.name};
+                std::ostringstream detail_oss;
+                detail_oss << c1.name << " (" << format_number(row_info[i].req_lower) << " <= " << c1.name << " <= " << format_number(row_info[i].req_upper) << ") vs "
+                           << c2.name << " (" << format_number(row_info[j].req_lower) << " <= " << c2.name << " <= " << format_number(row_info[j].req_upper) << ")";
+                diag.detailed_analysis = detail_oss.str();
+                return diag;
+            }
         }
     }
 
@@ -474,9 +532,18 @@ InfeasibilityDiagnosis InfeasibilityAnalyzer::analyze(const LPModel& model) {
         if (total_forced_min > target_rb.req_upper + 1e-9) {
             diag.is_infeasible = true;
             diag.summary = "Multi-row interval overlap contradiction";
+            
+            std::ostringstream detail_oss;
+            for (const auto& grp : candidate_groups) {
+                if (std::find(contributor_rows.begin(), contributor_rows.end(), grp.name) != contributor_rows.end()) {
+                    detail_oss << grp.name << " (min " << format_number(grp.forced_min_contribution) << ") + ";
+                }
+            }
+            detail_oss << "forced min " << format_number(total_forced_min) << " > " << target_cons.name << " required max " << format_number(target_rb.req_upper);
+            
             contributor_rows.push_back(target_cons.name);
             diag.conflicting_rows = contributor_rows;
-            diag.detailed_analysis = "forced min " + format_number(total_forced_min) + " > required " + format_number(target_rb.req_upper);
+            diag.detailed_analysis = detail_oss.str();
             return diag;
         }
     }

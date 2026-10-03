@@ -214,9 +214,9 @@ void TerminalDashboard::render_solve_section(const std::string& status, real_t o
 
 void TerminalDashboard::render_infeasibility_section(const InfeasibilityDiagnosis& diag) {
     if (!diag.is_infeasible) return;
-    std::cout << "\n[ INFEASIBILITY DIAGNOSIS (IIS) ]\n";
+    std::cout << "\n[ INFEASIBILITY DIAGNOSIS ]\n";
     std::cout << "  Diagnosis Summary   : " << diag.summary << "\n";
-    std::cout << "  IIS Report          : " << diag.to_string() << "\n";
+    std::cout << "  Infeasibility Cert  : " << diag.to_string() << "\n";
 }
 
 void TerminalDashboard::render_verification_section(bool enabled, const VerificationResult* v_res) {
@@ -416,8 +416,9 @@ int CLIDashboardApp::run(int argc, char* argv[]) {
     if (solve_status == "INFEASIBLE") {
         if (!diag.is_infeasible) {
             diag.is_infeasible = true;
-            diag.summary = "Model constraint infeasibility detected";
-            diag.detailed_analysis = "Constraint lower/upper bound combination cannot be satisfied.";
+            diag.summary = "Branch-and-Bound Infeasibility";
+            diag.conflicting_rows.clear();
+            diag.detailed_analysis = "Model determined infeasible by Branch-and-Bound; no single-row conflict certificate available.";
         }
         TerminalDashboard::render_infeasibility_section(diag);
     }

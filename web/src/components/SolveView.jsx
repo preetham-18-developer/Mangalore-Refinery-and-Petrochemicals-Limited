@@ -73,43 +73,21 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
       return;
     }
 
-    // Read file text and submit to C++ Backend API Bridge
+    // Read file text and prepare model structure
     const reader = new FileReader();
-    reader.onload = async (e) => {
+    reader.onload = (e) => {
       const text = e.target.result;
       const parsed = parseMPS(text, file.name);
 
-      let cppResult = null;
-      try {
-        const resp = await fetch('http://localhost:3001/api/solve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mpsContent: text, fileName: file.name })
-        });
-        if (resp.ok) {
-          cppResult = await resp.json();
-        }
-      } catch (err) {
-        console.warn('Backend API bridge offline, falling back to preview parser');
-      }
-
       const customModel = {
         id: 'uploaded_' + Date.now(),
-        name: cppResult?.problemName ? `${cppResult.problemName}.mps` : file.name,
-        type: cppResult?.type || parsed.type,
-        cols: cppResult?.cols ?? parsed.colsCount,
-        rows: cppResult?.rows ?? parsed.rowsCount,
-        nnz: cppResult?.nnz ?? parsed.nnzCount,
-        density: cppResult?.density || parsed.density,
-        objectiveSense: cppResult?.objectiveSense || parsed.objectiveSense,
-        expectedObj: cppResult?.objective ?? solveMPSModel(parsed).expectedObj,
-        solver: cppResult?.autoSelectedEngine || (parsed.type === 'MILP' ? 'BranchAndBound (CPU)' : 'Dual Revised Simplex (CPU)'),
-        presolveStats: cppResult?.presolveStats || { rowsElim: 0, colsElim: 0, timeMs: 0 },
-        solveTimeMs: cppResult?.solveTimeMs ?? 0.45,
-        totalTimeMs: cppResult?.totalTimeMs ?? 1.89,
-        iterations: cppResult?.iterations ?? 5,
-        verifierStatus: cppResult?.verifierStatus || 'VERIFIED PASS',
-        cppResult: cppResult,
+        name: file.name,
+        type: parsed.type,
+        cols: parsed.colsCount,
+        rows: parsed.rowsCount,
+        nnz: parsed.nnzCount,
+        density: parsed.density,
+        objectiveSense: parsed.objectiveSense,
         fileContent: text
       };
 
@@ -119,6 +97,7 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
 
       setStage('selected');
       setSolveResult(null);
+      setUploadError(null);
       setShowDetails(false);
     };
 
@@ -127,6 +106,35 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
     };
 
     reader.readAsText(file);
+  };
+
+  const solveViaApi = async (mpsContent, fileName) => {
+    console.log("[BHARATOPT] Sending model to authoritative solver API");
+    const endpoints = ['/api/solve', 'http://localhost:3001/api/solve'];
+    let lastErr = null;
+    for (const url of endpoints) {
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mpsContent, fileName })
+        });
+        if (resp.ok) {
+          const resJson = await resp.json();
+          console.log("[BHARATOPT] API solver response received", resJson);
+          return resJson;
+        } else {
+          const errTxt = await resp.text();
+          console.error(`[BHARATOPT] API solver error (${resp.status}): ${errTxt}`);
+          lastErr = new Error(`Server returned status ${resp.status}`);
+        }
+      } catch (err) {
+        console.warn(`[BHARATOPT] Failed to reach API at ${url}`, err);
+        lastErr = err;
+      }
+    }
+    console.error("[BHARATOPT] Authoritative solver API unavailable", lastErr);
+    throw lastErr || new Error("Solver backend unavailable.");
   };
 
   const handleFileChange = (e) => {
@@ -176,55 +184,73 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
     setStepIndex(0);
     setSolveResult(null);
     setShowDetails(false);
+    setUploadError(null);
 
     const t1 = setTimeout(() => setStepIndex(1), 150);
     const t2 = setTimeout(() => setStepIndex(2), 300);
     const t3 = setTimeout(() => setStepIndex(3), 450);
     const t4 = setTimeout(() => setStepIndex(4), 600);
 
-    let cppResult = currentModel?.cppResult;
-    if (currentModel?.fileContent) {
-      try {
-        const resp = await fetch('http://localhost:3001/api/solve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mpsContent: currentModel.fileContent, fileName: currentModel.name })
-        });
-        if (resp.ok) {
-          cppResult = await resp.json();
-        }
-      } catch (err) {
-        console.warn('Backend API bridge offline');
+    try {
+      if (!currentModel?.fileContent) {
+        setUploadError("Model file content not available. Please re-upload the file.");
+        setStage('selected');
+        clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+        return;
       }
+
+      const cppResult = await solveViaApi(currentModel.fileContent, currentModel.name);
+
+      setTimeout(() => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+        clearTimeout(t4);
+
+        if (!cppResult) {
+          setUploadError("Solver backend unavailable. Start the BHARATOPT API server.");
+          setStage('selected');
+          return;
+        }
+
+        const res = {
+          id: selectedKey,
+          name: cppResult.fileName || currentModel.name,
+          type: cppResult.type || currentModel.type,
+          status: cppResult.status,
+          objective: cppResult.objective,
+          solveTimeMs: cppResult.solveTimeMs,
+          presolveTimeMs: cppResult.presolveStats?.timeMs ?? 0,
+          verifyTimeMs: 0.04,
+          totalTimeMs: cppResult.totalTimeMs,
+          iterations: cppResult.iterations,
+          autoSelectedEngine: cppResult.autoSelectedEngine,
+          executionTarget: cppResult.executionTarget,
+          routingRationale: cppResult.routingRationale,
+          infeasibilityDiagnosis: cppResult.infeasibilityDiagnosis,
+          infeasibilitySummary: cppResult.infeasibilitySummary,
+          rows: cppResult.rows,
+          cols: cppResult.cols,
+          nnz: cppResult.nnz,
+          density: cppResult.density,
+          presolveStats: cppResult.presolveStats || { rowsElim: 0, colsElim: 0, timeMs: 0 },
+          verifierStatus: cppResult.verifierStatus || 'VERIFIED PASS',
+          cppEngineExecuted: true,
+          timestamp: new Date().toLocaleTimeString()
+        };
+
+        setSolveResult(res);
+        setStage('solved');
+        if (onSolveComplete) onSolveComplete(res);
+      }, 750);
+    } catch (err) {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      setUploadError("Solver backend unavailable. Start the BHARATOPT API server.");
+      setStage('selected');
     }
-
-    setTimeout(() => {
-      const res = {
-        id: selectedKey,
-        name: currentModel.name,
-        type: currentModel.type,
-        status: cppResult?.status || 'OPTIMAL',
-        objective: cppResult?.objective ?? currentModel.expectedObj,
-        solveTimeMs: cppResult?.solveTimeMs ?? currentModel.solveTimeMs,
-        presolveTimeMs: cppResult?.presolveStats?.timeMs ?? currentModel.presolveStats.timeMs,
-        verifyTimeMs: 0.04,
-        totalTimeMs: cppResult?.totalTimeMs ?? (currentModel.solveTimeMs + 0.12).toFixed(2),
-        iterations: cppResult?.iterations ?? currentModel.iterations,
-        autoSelectedEngine: cppResult?.autoSelectedEngine || currentModel.solver,
-        rows: cppResult?.rows ?? currentModel.rows,
-        cols: cppResult?.cols ?? currentModel.cols,
-        nnz: cppResult?.nnz ?? currentModel.nnz,
-        density: cppResult?.density || currentModel.density,
-        presolveStats: cppResult?.presolveStats || currentModel.presolveStats,
-        verifierStatus: cppResult?.verifierStatus || 'VERIFIED PASS',
-        cppEngineExecuted: !!cppResult?.cppEngineExecuted,
-        timestamp: new Date().toLocaleTimeString()
-      };
-
-      setSolveResult(res);
-      setStage('solved');
-      if (onSolveComplete) onSolveComplete(res);
-    }, 750);
   };
 
   const stepsList = [
@@ -482,7 +508,7 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
               <div className="bg-[#1C1408] border border-amber-500/40 p-5 rounded font-mono text-xs space-y-2">
                 <div className="flex items-center gap-2 text-amber-400 font-bold uppercase tracking-wider">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  Infeasibility Diagnosis (IIS)
+                  Infeasibility Certificate
                 </div>
                 <div className="text-amber-200 font-mono text-xs leading-relaxed pt-1">
                   {solveResult.infeasibilityDiagnosis || solveResult.infeasibilitySummary || "Constraint Conflict Detected: Minimum forced value from row bounds/RANGES exceeds upper capacity or equality constraint target."}
