@@ -345,7 +345,7 @@ export function solveMPSModel(parsedModel) {
   });
 
   // 2. Recompute objective from original parsed model
-  let objectiveValue = 0;
+  objectiveValue = 0;
   solvedX.forEach((val, colName) => {
     const col = parsedModel.colsMap.get(colName);
     if (col) objectiveValue += col.cost * val;
