@@ -503,15 +503,15 @@ export default function SolveView({ sampleModels, onSolveComplete, onNavigateToB
               </div>
             </div>
 
-            {/* Infeasibility Diagnosis Banner */}
-            {(solveResult.status === 'INFEASIBLE' || solveResult.infeasibilityDiagnosis) && (
+            {/* Infeasibility Certificate Banner */}
+            {solveResult.status === 'INFEASIBLE' && (
               <div className="bg-[#1C1408] border border-amber-500/40 p-5 rounded font-mono text-xs space-y-2">
                 <div className="flex items-center gap-2 text-amber-400 font-bold uppercase tracking-wider">
                   <AlertCircle className="w-4 h-4 shrink-0" />
-                  Infeasibility Certificate
+                  INFEASIBILITY CERTIFICATE
                 </div>
-                <div className="text-amber-200 font-mono text-xs leading-relaxed pt-1">
-                  {solveResult.infeasibilityDiagnosis || solveResult.infeasibilitySummary || "Constraint Conflict Detected: Minimum forced value from row bounds/RANGES exceeds upper capacity or equality constraint target."}
+                <div className="text-amber-200 font-mono text-xs leading-relaxed pt-1 whitespace-pre-wrap">
+                  {solveResult.infeasibilityDiagnosis || solveResult.infeasibilitySummary || "Model determined infeasible by Branch-and-Bound; no single-row conflict certificate available."}
                 </div>
               </div>
             )}
